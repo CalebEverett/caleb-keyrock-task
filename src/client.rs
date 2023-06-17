@@ -1,4 +1,5 @@
 use clap::Parser;
+use tokio_stream::StreamExt;
 
 pub mod orderbook {
     tonic::include_proto!("orderbook");
@@ -13,26 +14,53 @@ struct Options {
 
 #[derive(Debug, Parser)]
 enum Command {
-    Get(GetOptions),
+    Get(SummaryOptions),
+    Watch(SummaryOptions),
 }
 
 #[derive(Debug, Parser)]
-struct GetOptions {
-    #[clap(long)]
+struct SummaryOptions {
     symbol_1: String,
-    #[clap(long)]
     symbol_2: String,
 }
 
-async fn get(opts: GetOptions) -> Result<(), Box<dyn std::error::Error>> {
+async fn get(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
     let request = tonic::Request::new(Pair {
         symbol_1: opts.symbol_1,
         symbol_2: opts.symbol_2,
     });
-    let summary = client.book_summary(request).await?.into_inner();
+    let summary = client.get(request).await?.into_inner();
     tracing::info!("summary: {:?}", summary);
+    Ok(())
+}
+
+async fn watch(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
+    let mut stream = client
+        .watch(Pair {
+            symbol_1: opts.symbol_1,
+            symbol_2: opts.symbol_2,
+        })
+        .await?
+        .into_inner();
+
+    while let Some(summary) = stream.next().await {
+        match summary {
+            Ok(summary) => println!("summary was updated: {:?}", summary),
+            Err(err) => {
+                if err.code() == tonic::Code::NotFound {
+                    println!("watched item has been removed from the inventory.");
+                    break;
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+    }
+    println!("stream closed");
+
     Ok(())
 }
 
@@ -43,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use Command::*;
     match opts.command {
         Get(opts) => get(opts).await?,
+        Watch(opts) => watch(opts).await?,
     };
 
     Ok(())

@@ -2,7 +2,10 @@ syntax = "proto3";
 
 package orderbook;
 
-service OrderbookAggregator { rpc BookSummary(Pair) returns (Summary); }
+service OrderbookAggregator {
+  rpc Get(Pair) returns (Summary);
+  rpc Watch(Pair) returns (stream Summary);
+}
 
 message Pair {
   string symbol_1 = 1;

@@ -18,10 +18,12 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1.68"
 clap = { version = "4.3.4", features = ["derive"] }
+futures = "0.3.28"
 prost = "0.11.9"
 protobuf = { version = "3.2.0", features = ["with-bytes"] }
 protoc = "2.28.0"
 tokio = { version = "1.28.2", features = ["macros", "rt-multi-thread"] }
+tokio-stream = "0.1.14"
 tonic = "0.9.2"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }

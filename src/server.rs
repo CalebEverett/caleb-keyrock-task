@@ -1,4 +1,9 @@
-use tonic::transport::Server;
+use std::pin::Pin;
+
+use futures::Stream;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::UnboundedReceiverStream;
+use tonic::{transport::Server, Status};
 
 pub mod orderbook {
     tonic::include_proto!("orderbook");
@@ -35,15 +40,45 @@ impl Default for OrderbookSummary {
 
 #[async_trait::async_trait]
 impl OrderbookAggregator for OrderbookSummary {
-    #[tracing::instrument]
-    async fn book_summary(
-        &self,
-        request: tonic::Request<Pair>,
-    ) -> Result<tonic::Response<Summary>, tonic::Status> {
-        tracing::info!("Got a request from {:?}", request.remote_addr());
+    type WatchStream = Pin<Box<dyn Stream<Item = Result<Summary, Status>> + Send>>;
+
+    async fn get(&self, request: tonic::Request<Pair>) -> Result<tonic::Response<Summary>, Status> {
+        let addr = request.remote_addr();
         let pair = request.into_inner();
+        tracing::info!(
+            "Got a request for symbols {} and {} from {:?}",
+            pair.symbol_1,
+            pair.symbol_2,
+            addr
+        );
         let response = tonic::Response::new(self.summary.clone());
         Ok(response)
+    }
+
+    async fn watch(
+        &self,
+        request: tonic::Request<Pair>,
+    ) -> Result<tonic::Response<Self::WatchStream>, Status> {
+        let pair = request.into_inner();
+        tracing::info!(
+            "Got a request for symbols {} and {}",
+            pair.symbol_1,
+            pair.symbol_2
+        );
+        let (tx, rx) = mpsc::unbounded_channel();
+        let summary = self.summary.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if let Err(err) = tx.send(Ok(summary.clone())) {
+                    tracing::error!("Error sending summary: {:?}", err);
+                    return;
+                }
+            }
+        });
+
+        let stream = UnboundedReceiverStream::new(rx);
+        Ok(tonic::Response::new(Box::pin(stream) as Self::WatchStream))
     }
 }
 
