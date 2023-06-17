@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package orderbook;
+
+service OrderbookAggregator { rpc BookSummary(Pair) returns (Summary); }
+
+message Pair {
+  string symbol_1 = 1;
+  string symbol_2 = 2;
+}
+
+message Summary {
+  double spread = 1;
+  repeated Level bids = 2;
+  repeated Level asks = 3;
+}
+
+message Level {
+  string exchange = 1;
+  double price = 2;
+  double amount = 3;
+}
