@@ -34,18 +34,17 @@ pub async fn get_symbols_bitstamp() -> Result<HashSet<String>, Box<dyn std::erro
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub last_update_id: i64,
-    #[serde(deserialize_with = "from_string")]
+    #[serde(deserialize_with = "from_str")]
     pub bids: Vec<[f64; 2]>,
-    #[serde(deserialize_with = "from_string")]
+    #[serde(deserialize_with = "from_str")]
     pub asks: Vec<[f64; 2]>,
 }
 
-fn from_string<'de, D>(deserializer: D) -> Result<Vec<[f64; 2]>, D::Error>
+fn from_str<'de, D>(deserializer: D) -> Result<Vec<[f64; 2]>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let v: Vec<[&str; 2]> = Deserialize::deserialize(deserializer)?;
-    // do better hex decoding than this
     Ok(v.iter()
         .map(|s| {
             [
