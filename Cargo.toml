@@ -37,6 +37,7 @@ url = "2.4.0"
 prost = "0.11.9"
 serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.24.1", features = ["derive"] }
+serde-aux = "4.2.0"
 # protobuf = { version = "3.2.0", features = ["with-bytes"] }
 
 [build-dependencies]

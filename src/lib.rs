@@ -1,16 +1,9 @@
+use orderbook::{ExchangeType, Level, Summary, Symbol};
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_aux::prelude::*;
 use std::collections::HashSet;
 pub mod orderbook {
     tonic::include_proto!("orderbook");
-}
-
-pub async fn get_symbols(
-    exchange: orderbook::ExchangeType,
-) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
-    match exchange {
-        orderbook::ExchangeType::Binance => get_symbols_binance().await,
-        orderbook::ExchangeType::Bitstamp => get_symbols_bitstamp().await,
-    }
 }
 
 pub async fn get_symbols_binance(
@@ -44,6 +37,10 @@ pub async fn get_symbols_bitstamp(
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    #[serde(
+        alias = "microtimestamp",
+        deserialize_with = "deserialize_number_from_string"
+    )]
     pub last_update_id: i64,
     #[serde(deserialize_with = "from_str")]
     pub bids: Vec<[f64; 2]>,
@@ -64,4 +61,37 @@ where
             ]
         })
         .collect::<Vec<[f64; 2]>>())
+}
+
+pub async fn get_snapshot(
+    exchange: ExchangeType,
+    symbol: Symbol,
+    limit: usize,
+) -> Result<Snapshot, Box<dyn std::error::Error + Send + Sync>> {
+    let url = match exchange {
+        orderbook::ExchangeType::Binance => {
+            format!(
+                "https://www.binance.us/api/v3/depth?symbol={}&limit={}",
+                symbol.symbol, limit
+            )
+        }
+        orderbook::ExchangeType::Bitstamp => format!(
+            "https://www.bitstamp.net/api/v2/order_book/{}/",
+            symbol.symbol
+        ),
+    };
+
+    let mut snapshot = reqwest::get(url)
+        .await
+        .expect("Failed to get snapshot")
+        .json::<Snapshot>()
+        .await
+        .expect("Failed to parse json");
+
+    if exchange == ExchangeType::Bitstamp {
+        snapshot.bids = snapshot.bids[0..limit].to_vec();
+        snapshot.asks = snapshot.asks[0..limit].to_vec();
+    }
+
+    Ok(snapshot)
 }

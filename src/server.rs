@@ -1,7 +1,8 @@
 use caleb_keyrock_task_lib::{get_symbols_binance, get_symbols_bitstamp, Snapshot};
 use dotenv::dotenv;
-use futures::future::try_join_all;
 use futures::Stream;
+use futures::{future::try_join_all, FutureExt};
+use orderbook::SummaryRequest;
 use std::{collections::HashSet, pin::Pin};
 use strum::IntoEnumIterator;
 
@@ -95,23 +96,139 @@ pub async fn get_symbols_all() -> Result<Symbols, Box<dyn std::error::Error + Se
     Ok(Symbols { symbols })
 }
 
-pub async fn validate_symbol(request: tonic::Request<Symbol>) -> Result<Symbol, Status> {
+pub async fn validate_summary_request(
+    request: tonic::Request<SummaryRequest>,
+) -> Result<(Symbol, i32), Status> {
     let addr = request.remote_addr().unwrap();
-    let symbol = request.into_inner();
-    tracing::info!("Got a request for symbol {} from {:?}", symbol.symbol, addr);
+    let summary_request = request.into_inner();
+    let symbol = summary_request.symbol.unwrap();
+    let limit = summary_request.limit;
+    tracing::info!(
+        "Received request for symbol {} with limit of {} from {:?}",
+        symbol.symbol,
+        limit,
+        addr
+    );
 
     let symbols = get_symbols_all().await.expect("Failed to get symbols");
-    if !symbols.symbols.iter().any(|s| {
-        println!("s: {:?}, symbol: {:?}", s, symbol);
-        s == &symbol
-    }) {
+    if !symbols.symbols.iter().any(|s| s == &symbol) {
         tracing::error!(
             "Symbol {} not found on one or more exchanges",
             symbol.symbol
         );
         return Err(Status::not_found("Symbol not found"));
     }
-    Ok(symbol)
+    Ok((symbol, limit))
+}
+
+pub async fn get_snapshot(
+    exchange: ExchangeType,
+    symbol: &Symbol,
+    limit: i32,
+) -> Result<(ExchangeType, Snapshot), Box<dyn std::error::Error + Send + Sync>> {
+    let url = match exchange {
+        orderbook::ExchangeType::Binance => {
+            format!(
+                "https://www.binance.us/api/v3/depth?symbol={}&limit={}",
+                symbol.symbol, limit
+            )
+        }
+        orderbook::ExchangeType::Bitstamp => format!(
+            "https://www.bitstamp.net/api/v2/order_book/{}/",
+            symbol.symbol.to_lowercase()
+        ),
+    };
+
+    tracing::info!(
+        "Getting snapshot for {} from {}",
+        exchange.as_str_name(),
+        url
+    );
+
+    let mut snapshot = reqwest::get(url)
+        .await
+        .expect(format!("Failed to get snapshot for {}", exchange.as_str_name()).as_str())
+        .json::<Snapshot>()
+        .await
+        .expect(format!("Failed to parse json for {}", exchange.as_str_name()).as_str());
+
+    if exchange == ExchangeType::Bitstamp {
+        snapshot.bids = snapshot.bids[0..limit as usize].to_vec();
+        snapshot.asks = snapshot.asks[0..limit as usize].to_vec();
+    }
+
+    Ok((exchange, snapshot))
+}
+
+pub async fn get_snapshots(
+    symbol: Symbol,
+    limit: i32,
+) -> Result<Vec<(ExchangeType, Snapshot)>, Box<dyn std::error::Error + Send + Sync>> {
+    let snapshots_vec: Vec<(ExchangeType, Snapshot)> = try_join_all(
+        ExchangeType::iter()
+            .map(|exchange| get_snapshot(exchange, &symbol, limit))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("couldn't get snapshots");
+    Ok(snapshots_vec)
+}
+
+pub fn snapshot_to_summary(exchange: ExchangeType, snapshot: Snapshot) -> Summary {
+    Summary {
+        spread: snapshot.asks[0][0] - snapshot.bids[0][0],
+        bids: snapshot
+            .bids
+            .into_iter()
+            .map(|b| Level {
+                exchange: exchange as i32,
+                price: b[0],
+                amount: b[1],
+            })
+            .collect(),
+
+        asks: snapshot
+            .asks
+            .into_iter()
+            .map(|b| Level {
+                exchange: exchange as i32,
+                price: b[0],
+                amount: b[1],
+            })
+            .collect(),
+    }
+}
+
+pub fn merge_summaries(summaries: Vec<Summary>) -> Summary {
+    let limit = summaries.iter().fold(0i32, |acc, s| {
+        std::cmp::max(acc, std::cmp::max(s.asks.len(), s.bids.len()) as i32)
+    });
+
+    let mut summary: Summary =
+        summaries
+            .into_iter()
+            .fold(Summary::default(), |mut acc, summary| {
+                acc.bids.extend(summary.bids);
+                acc.asks.extend(summary.asks);
+                acc
+            });
+
+    summary.bids.sort_by(|a, b| {
+        b.price
+            .partial_cmp(&a.price)
+            .unwrap()
+            .then(b.amount.partial_cmp(&a.amount).unwrap())
+    });
+    summary.asks.sort_by(|a, b| {
+        b.price
+            .partial_cmp(&a.price)
+            .unwrap()
+            .then(b.amount.partial_cmp(&a.amount).unwrap())
+    });
+    summary.bids = summary.bids[0..limit as usize].to_vec();
+    summary.asks = summary.asks[0..limit as usize].to_vec();
+    summary.spread = summary.asks[0].price - summary.bids[0].price;
+    summary
 }
 
 #[async_trait::async_trait]
@@ -131,42 +248,19 @@ impl OrderbookAggregator for OrderbookSummary {
 
     async fn get_summary(
         &self,
-        request: tonic::Request<Symbol>,
+        request: tonic::Request<SummaryRequest>,
     ) -> Result<tonic::Response<Summary>, Status> {
-        let symbol = validate_symbol(request).await?;
-        let snapshot = reqwest::get(format!(
-            "https://www.binance.us/api/v3/depth?symbol={}&limit=10",
-            symbol.symbol
-        ))
-        .await
-        .expect("Failed to get snapshot")
-        .json::<Snapshot>()
-        .await
-        .expect("Failed to parse json");
+        let (symbol, limit) = validate_summary_request(request).await?;
 
-        tracing::info!("Got snapshot: {:?}", snapshot);
-        let summary = Summary {
-            spread: snapshot.asks[0][0] - snapshot.bids[0][0],
-            bids: snapshot
-                .bids
+        let snapshots: Vec<Summary> =
+            try_join_all(ExchangeType::iter().map(|e| get_snapshot(e, &symbol, limit)))
+                .await
+                .expect("couldn't get snapshots")
                 .into_iter()
-                .map(|b| Level {
-                    exchange: ExchangeType::Binance as i32,
-                    price: b[0],
-                    amount: b[1],
-                })
-                .collect(),
+                .map(|(e, s)| snapshot_to_summary(e, s))
+                .collect();
 
-            asks: snapshot
-                .asks
-                .into_iter()
-                .map(|b| Level {
-                    exchange: ExchangeType::Binance as i32,
-                    price: b[0],
-                    amount: b[1],
-                })
-                .collect(),
-        };
+        let summary = merge_summaries(snapshots);
         let response = tonic::Response::new(summary);
         Ok(response)
     }

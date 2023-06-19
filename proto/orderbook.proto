@@ -3,7 +3,7 @@ syntax = "proto3";
 package orderbook;
 
 service OrderbookAggregator {
-  rpc GetSummary(Symbol) returns (Summary);
+  rpc GetSummary(SummaryRequest) returns (Summary);
   rpc WatchSummary(Symbol) returns (stream Summary);
   rpc GetSymbols(Empty) returns (Symbols);
 }
@@ -16,6 +16,11 @@ enum ExchangeType {
 }
 
 message Symbol { string symbol = 1; }
+
+message SummaryRequest {
+  Symbol symbol = 1;
+  int32 limit = 2;
+}
 
 message Symbols { repeated Symbol symbols = 1; }
 

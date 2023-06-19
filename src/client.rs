@@ -5,6 +5,8 @@ pub mod orderbook {
 }
 use orderbook::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty, Symbol};
 
+use crate::orderbook::SummaryRequest;
+
 #[derive(Debug, Parser)]
 struct Options {
     #[clap(subcommand)]
@@ -21,14 +23,20 @@ enum Command {
 #[derive(Debug, Parser)]
 struct SummaryOptions {
     symbol: String,
+    limit: Option<i32>,
 }
 
 async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
-    let request = tonic::Request::new(Symbol {
-        symbol: opts.symbol,
+    let limit = opts.limit.unwrap_or(10);
+    let request = tonic::Request::new(SummaryRequest {
+        symbol: Some(Symbol {
+            symbol: opts.symbol,
+        }),
+        limit,
     });
+
     let summary = client.get_summary(request).await?.into_inner();
     println!("summary: {:?}", summary);
     Ok(())
