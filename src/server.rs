@@ -1,8 +1,9 @@
-use std::pin::Pin;
-
-use caleb_keyrock_task_lib::Snapshot;
+use caleb_keyrock_task_lib::{get_symbols_binance, get_symbols_bitstamp, Snapshot};
 use dotenv::dotenv;
+use futures::future::try_join_all;
 use futures::Stream;
+use std::{collections::HashSet, pin::Pin};
+use strum::IntoEnumIterator;
 
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
@@ -47,24 +48,50 @@ impl Default for OrderbookSummary {
     }
 }
 
-pub async fn get_symbols_all() -> Result<Symbols, Box<dyn std::error::Error>> {
-    let symbols_binance = caleb_keyrock_task_lib::get_symbols_binance().await?;
-    let symbols_bitstamp = caleb_keyrock_task_lib::get_symbols_bitstamp().await?;
-    let mut symbols: Vec<_> = symbols_binance
-        .intersection(&symbols_bitstamp)
-        .map(|symbol| Symbol {
-            symbol: symbol.clone(),
-        })
+pub async fn get_symbols(
+    exchange: ExchangeType,
+) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
+    match exchange {
+        ExchangeType::Binance => get_symbols_binance().await,
+        ExchangeType::Bitstamp => get_symbols_bitstamp().await,
+    }
+}
+
+pub async fn get_symbols_all() -> Result<Symbols, Box<dyn std::error::Error + Send + Sync>> {
+    let symbols_vec = try_join_all(
+        ExchangeType::iter()
+            .map(|exchange| get_symbols(exchange))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("couldn't get symbols");
+
+    let exchange_names: Vec<&str> = ExchangeType::iter().map(|e| e.as_str_name()).collect();
+    let symbols_intersection: HashSet<String> =
+        symbols_vec
+            .into_iter()
+            .enumerate()
+            .fold(HashSet::new(), |acc, (i, set)| {
+                tracing::info!(exchange = &exchange_names[i], symbols_count = set.len());
+                if acc.is_empty() {
+                    set
+                } else {
+                    acc.intersection(&set).map(|s| s.to_string()).collect()
+                }
+            });
+
+    let mut symbols: Vec<_> = symbols_intersection
+        .into_iter()
+        .map(|symbol| Symbol { symbol })
         .collect();
 
     symbols.sort_by(|a, b| a.symbol.cmp(&b.symbol));
 
-    println!(
-        "binance: {}, bitstamp: {}, all: {}",
-        &symbols_binance.len(),
-        &symbols_bitstamp.len(),
-        &symbols.len()
+    tracing::info!(
+        exchanges = format!("[{}]", exchange_names.join(", ")),
+        symbols_count = symbols.len()
     );
+
     Ok(Symbols { symbols })
 }
 
@@ -98,10 +125,6 @@ impl OrderbookAggregator for OrderbookSummary {
         let addr = request.remote_addr().unwrap();
         tracing::info!("Got a request for symbols from {:?}", addr);
         let symbols: Symbols = get_symbols_all().await.expect("Failed to get symbols");
-        tracing::info!(
-            "Found {} matching symbols on both exchanges",
-            symbols.symbols.len()
-        );
         let response = tonic::Response::new(symbols);
         Ok(response)
     }

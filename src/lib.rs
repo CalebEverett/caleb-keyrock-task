@@ -4,7 +4,17 @@ pub mod orderbook {
     tonic::include_proto!("orderbook");
 }
 
-pub async fn get_symbols_binance() -> Result<HashSet<String>, Box<dyn std::error::Error>> {
+pub async fn get_symbols(
+    exchange: orderbook::ExchangeType,
+) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
+    match exchange {
+        orderbook::ExchangeType::Binance => get_symbols_binance().await,
+        orderbook::ExchangeType::Bitstamp => get_symbols_bitstamp().await,
+    }
+}
+
+pub async fn get_symbols_binance(
+) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
     let symbols = reqwest::get("https://api.binance.us/api/v3/exchangeInfo")
         .await?
         .json::<serde_json::Value>()
@@ -17,7 +27,8 @@ pub async fn get_symbols_binance() -> Result<HashSet<String>, Box<dyn std::error
     Ok(symbols)
 }
 
-pub async fn get_symbols_bitstamp() -> Result<HashSet<String>, Box<dyn std::error::Error>> {
+pub async fn get_symbols_bitstamp(
+) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
     let symbols = reqwest::get("https://www.bitstamp.net/api/v2/ticker/")
         .await?
         .json::<serde_json::Value>()
