@@ -1,10 +1,9 @@
 use clap::Parser;
 use tokio_stream::StreamExt;
-
 pub mod orderbook {
     tonic::include_proto!("orderbook");
 }
-use orderbook::{orderbook_aggregator_client::OrderbookAggregatorClient, Pair};
+use orderbook::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty, Symbol};
 
 #[derive(Debug, Parser)]
 struct Options {
@@ -14,34 +13,32 @@ struct Options {
 
 #[derive(Debug, Parser)]
 enum Command {
-    Get(SummaryOptions),
-    Watch(SummaryOptions),
+    GetSummary(SummaryOptions),
+    WatchSummary(SummaryOptions),
+    GetSymbols,
 }
 
 #[derive(Debug, Parser)]
 struct SummaryOptions {
-    symbol_1: String,
-    symbol_2: String,
+    symbol: String,
 }
 
-async fn get(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
+async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
-    let request = tonic::Request::new(Pair {
-        symbol_1: opts.symbol_1,
-        symbol_2: opts.symbol_2,
+    let request = tonic::Request::new(Symbol {
+        symbol: opts.symbol,
     });
-    let summary = client.get(request).await?.into_inner();
-    tracing::info!("summary: {:?}", summary);
+    let summary = client.get_summary(request).await?.into_inner();
+    println!("summary: {:?}", summary);
     Ok(())
 }
 
-async fn watch(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
+async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
     let mut stream = client
-        .watch(Pair {
-            symbol_1: opts.symbol_1,
-            symbol_2: opts.symbol_2,
+        .watch_summary(Symbol {
+            symbol: opts.symbol,
         })
         .await?
         .into_inner();
@@ -64,14 +61,29 @@ async fn watch(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn get_symbols() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
+
+    let request = tonic::Request::new(Empty {});
+    let symbols = client.get_symbols(request).await?.into_inner();
+    for symbol in symbols.symbols {
+        println!("{}", symbol.symbol);
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opts = Options::parse();
 
     use Command::*;
     match opts.command {
-        Get(opts) => get(opts).await?,
-        Watch(opts) => watch(opts).await?,
+        GetSummary(opts) => get_summary(opts).await?,
+        WatchSummary(opts) => watch_summary(opts).await?,
+        GetSymbols => {
+            get_symbols().await?;
+            return Ok(());
+        }
     };
 
     Ok(())

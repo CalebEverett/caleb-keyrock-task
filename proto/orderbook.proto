@@ -3,14 +3,21 @@ syntax = "proto3";
 package orderbook;
 
 service OrderbookAggregator {
-  rpc Get(Pair) returns (Summary);
-  rpc Watch(Pair) returns (stream Summary);
+  rpc GetSummary(Symbol) returns (Summary);
+  rpc WatchSummary(Symbol) returns (stream Summary);
+  rpc GetSymbols(Empty) returns (Symbols);
 }
 
-message Pair {
-  string symbol_1 = 1;
-  string symbol_2 = 2;
+message Empty {}
+
+enum ExchangeType {
+  BINANCE = 0;
+  BITSTAMP = 1;
 }
+
+message Symbol { string symbol = 1; }
+
+message Symbols { repeated Symbol symbols = 1; }
 
 message Summary {
   double spread = 1;
@@ -19,7 +26,7 @@ message Summary {
 }
 
 message Level {
-  string exchange = 1;
+  ExchangeType exchange = 1;
   double price = 2;
   double amount = 3;
 }
