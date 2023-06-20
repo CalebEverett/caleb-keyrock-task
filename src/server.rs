@@ -1,10 +1,13 @@
 use caleb_keyrock_task_lib::{get_symbols_binance, get_symbols_bitstamp, Snapshot};
 use dotenv::dotenv;
-use futures::Stream;
 use futures::{future::try_join_all, FutureExt};
+use futures::{SinkExt, Stream};
 use orderbook::SummaryRequest;
+use serde_json::json;
 use std::{collections::HashSet, pin::Pin};
 use strum::IntoEnumIterator;
+use tokio_stream::StreamMap;
+use tokio_tungstenite::tungstenite::Message;
 
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
@@ -20,7 +23,8 @@ use orderbook::{
     Empty, ExchangeType, Level, Summary, Symbol, Symbols,
 };
 
-const BASE_URL_BINANCE: &str = "wss://stream.binance.us:9443";
+const BASE_WS_BINANCE: &str = "wss://stream.binance.us:9443";
+const BASE_WS_BISTAMP: &str = "wss://ws.bitstamp.net";
 
 #[derive(Debug)]
 pub struct OrderbookSummary {
@@ -273,56 +277,45 @@ impl OrderbookAggregator for OrderbookSummary {
         tracing::info!("Got a request for symbol {}", symbol.symbol,);
         let (tx, rx) = mpsc::unbounded_channel();
 
-        let snapshot = reqwest::get("https://www.binance.us/api/v3/depth?symbol=BTCUSDT&limit=10")
-            .await
-            .expect("Failed to get snapshot")
-            .json::<Snapshot>()
-            .await
-            .expect("Failed to parse json");
-
-        tracing::info!("Got snapshot: {:?}", snapshot);
-
-        let ws_url = Url::parse(BASE_URL_BINANCE)
+        let mut map = StreamMap::new();
+        let ws_url_binance = Url::parse(BASE_WS_BINANCE)
             .expect("bad binance url")
             .join("ws/btcusdt@depth")
             .unwrap();
 
-        let (mut ws_stream, _) = connect_async(&ws_url)
+        let (ws_stream_binance, _) = connect_async(&ws_url_binance)
             .await
-            .expect(format!("Failed to connect to {}", &ws_url.as_str()).as_str());
+            .expect(format!("Failed to connect to {}", &ws_url_binance.as_str()).as_str());
+        map.insert(ExchangeType::Binance, ws_stream_binance);
 
-        while let Some(msg) = ws_stream.next().await {
+        let ws_url_bitstamp = Url::parse(BASE_WS_BISTAMP).expect("bad bitstamp url");
+        let subscribe_msg = json!({
+            "event": "bts:subscribe",
+            "data": {
+                "channel": "diff_order_book_btcusdt"
+            }
+        });
+
+        let (mut ws_stream_bitstamp, _) = connect_async(&ws_url_bitstamp)
+            .await
+            .expect(format!("Failed to connect to {}", &ws_url_bitstamp.as_str()).as_str());
+
+        ws_stream_bitstamp
+            .start_send_unpin(Message::Text(subscribe_msg.to_string()))
+            .expect("Failed to send subscribe message to bitstamp");
+
+        map.insert(ExchangeType::Bitstamp, ws_stream_bitstamp);
+
+        let summary = Summary::default();
+        while let Some((key, msg)) = map.next().await {
             let msg = msg.expect("Failed to get message");
             let msg = msg.into_text().expect("Failed to convert to text");
-            tracing::info!("Got message: {}", msg);
-            // let msg =
-            //     serde_json::from_str::<serde_json::Value>(&msg).expect("Failed to parse json");
-            // let bids = msg["bids"]
-            //     .as_array()
-            //     .expect("Failed to get bids")
-            //     .iter()
-            //     .map(|bid| Level {
-            //         exchange: "binance".to_string(),
-            //         price: bid[0].as_str().unwrap().parse::<f64>().unwrap(),
-            //         amount: bid[1].as_str().unwrap().parse::<f64>().unwrap(),
-            //     })
-            //     .collect::<Vec<Level>>();
-            // let asks = msg["asks"]
-            //     .as_array()
-            //     .expect("Failed to get asks")
-            //     .iter()
-            //     .map(|ask| Level {
-            //         exchange: "binance".to_string(),
-            //         price: ask[0].as_str().unwrap().parse::<f64>().unwrap(),
-            //         amount: ask[1].as_str().unwrap().parse::<f64>().unwrap(),
-            //     })
-            //     .collect::<Vec<Level>>();
-            // let spread = bids[0].price - asks[0].price;
-            // let summary = Summary { spread, bids, asks };
-            // if let Err(err) = tx.send(Ok(summary.clone())) {
-            //     tracing::error!("Error sending summary: {:?}", err);
-            //     return Err(Status::internal("Error sending summary"));
-            // }
+            tracing::info!("Got message from {}: {}", key.as_str_name(), msg);
+
+            if let Err(err) = tx.send(Ok(summary.clone())) {
+                tracing::error!("Error sending summary: {:?}", err);
+                return Err(Status::internal("Error sending summary"));
+            }
         }
 
         let stream = UnboundedReceiverStream::new(rx);
