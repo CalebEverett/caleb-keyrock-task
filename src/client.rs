@@ -3,7 +3,9 @@ use tokio_stream::StreamExt;
 pub mod orderbook {
     tonic::include_proto!("orderbook");
 }
-use orderbook::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty, Symbol};
+use orderbook::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty};
+
+use crate::orderbook::SummaryRequest;
 
 #[derive(Debug, Parser)]
 struct Options {
@@ -21,14 +23,18 @@ enum Command {
 #[derive(Debug, Parser)]
 struct SummaryOptions {
     symbol: String,
+    limit: Option<i32>,
 }
 
 async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
-    let request = tonic::Request::new(Symbol {
+    let limit = opts.limit.unwrap_or(10);
+    let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
+        limit: opts.limit.unwrap_or(10),
     });
+
     let summary = client.get_summary(request).await?.into_inner();
     println!("summary: {:?}", summary);
     Ok(())
@@ -36,12 +42,11 @@ async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Err
 
 async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
-    let mut stream = client
-        .watch_summary(Symbol {
-            symbol: opts.symbol,
-        })
-        .await?
-        .into_inner();
+    let request = tonic::Request::new(SummaryRequest {
+        symbol: opts.symbol,
+        limit: opts.limit.unwrap_or(10),
+    });
+    let mut stream = client.watch_summary(request).await?.into_inner();
 
     while let Some(summary) = stream.next().await {
         match summary {
@@ -67,7 +72,7 @@ async fn get_symbols() -> Result<(), Box<dyn std::error::Error>> {
     let request = tonic::Request::new(Empty {});
     let symbols = client.get_symbols(request).await?.into_inner();
     for symbol in symbols.symbols {
-        println!("{}", symbol.symbol);
+        println!("{}", symbol);
     }
     Ok(())
 }
