@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "caleb_keyrock_task_lib"
-path = "src/lib.rs"
+name = "ckt_common"
+path = "src/common.rs"
 
 # server binary
 [[bin]]
