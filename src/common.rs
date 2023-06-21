@@ -176,7 +176,7 @@ pub struct Snapshot {
         alias = "microtimestamp",
         deserialize_with = "deserialize_number_from_string"
     )]
-    pub last_update_id: i64,
+    pub last_update_id: u64,
     #[serde(deserialize_with = "from_str")]
     pub bids: Vec<[f64; 2]>,
     #[serde(deserialize_with = "from_str")]
@@ -218,6 +218,92 @@ impl Default for PricePoint {
     }
 }
 
+#[derive(Debug)]
+pub struct Updates {
+    pub exchange: ExchangeType,
+    pub last_update_id: u64,
+    pub bids: Vec<[f64; 2]>,
+    pub asks: Vec<[f64; 2]>,
+}
+
+pub fn updates_binance(
+    value: serde_json::Value,
+) -> Result<Updates, Box<dyn std::error::Error + Send + Sync>> {
+    let last_update_id = value["E"].as_u64().unwrap();
+
+    let bids = value["b"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            [
+                b[0].as_str().unwrap().parse::<f64>().unwrap(),
+                b[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    let asks = value["a"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            [
+                a[0].as_str().unwrap().parse::<f64>().unwrap(),
+                a[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    Ok(Updates {
+        exchange: ExchangeType::Binance,
+        last_update_id,
+        bids,
+        asks,
+    })
+}
+
+pub fn updates_bitstamp(
+    value: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Updates, Box<dyn std::error::Error + Send + Sync>> {
+    let last_update_id = value["microtimestamp"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+
+    let bids = value["bids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            [
+                b[0].as_str().unwrap().parse::<f64>().unwrap(),
+                b[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    let asks = value["asks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            [
+                a[0].as_str().unwrap().parse::<f64>().unwrap(),
+                a[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    Ok(Updates {
+        exchange: ExchangeType::Bitstamp,
+        last_update_id,
+        bids,
+        asks,
+    })
+}
+
 #[derive(Debug, Default)]
 pub struct Orderbook {
     pub ask_min: Price,
@@ -245,7 +331,13 @@ impl Orderbook {
     ) {
         let min_price = min_price.mul(10u32.pow(power_price) as f64) as Price;
         let max_price = max_price.mul(10u32.pow(power_price) as f64) as Price;
-
+        tracing::info!(
+            "Resetting orderbook for {} with limit {} and price range {} - {}",
+            symbol,
+            limit,
+            min_price,
+            max_price
+        );
         let mut pps: Vec<PricePoint> = Vec::with_capacity((max_price - min_price) as usize + 2);
 
         let mut idx = 0;
@@ -359,6 +451,19 @@ impl Orderbook {
         }
 
         Ok(())
+    }
+
+    pub fn update(&mut self, updates: Updates) {
+        updates.bids.into_iter().for_each(|b| {
+            let price = b[0];
+            let amount = b[1];
+            let _ = self.add_bid(updates.exchange.clone(), [price, amount]);
+        });
+        updates.asks.into_iter().for_each(|a| {
+            let price = a[0];
+            let amount = a[1];
+            let _ = self.add_ask(updates.exchange.clone(), [price, amount]);
+        });
     }
 
     fn add_snapshot(&mut self, exchange: ExchangeType, snapshot: Snapshot) {

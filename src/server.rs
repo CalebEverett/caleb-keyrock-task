@@ -17,7 +17,7 @@ use ckt_common::{
         orderbook_aggregator_server::{OrderbookAggregator, OrderbookAggregatorServer},
         Empty, ExchangeType, Summary, SummaryRequest, Symbols,
     },
-    validate_symbol, Orderbook,
+    updates_binance, updates_bitstamp, validate_symbol, Orderbook,
 };
 
 const BASE_WS_BINANCE: &str = "wss://stream.binance.us:9443";
@@ -88,9 +88,12 @@ impl OrderbookAggregator for OrderbookSummary {
         let (tx, rx) = mpsc::unbounded_channel();
 
         validate_symbol(&symbol).await?;
-        let mut ob = self.orderbook.lock().await;
-        ob.reset(symbol.clone(), limit, min_price, max_price, power_price);
-        ob.add_snapshots().await.expect("Could not add snapshots");
+        {
+            let ob_clone = self.orderbook.clone();
+            let mut ob = ob_clone.lock().await;
+            ob.reset(symbol.clone(), limit, min_price, max_price, power_price);
+            ob.add_snapshots().await.expect("Could not add snapshots");
+        }
 
         let mut map = StreamMap::new();
         let ws_url_binance = Url::parse(BASE_WS_BINANCE)
@@ -122,24 +125,35 @@ impl OrderbookAggregator for OrderbookSummary {
 
         map.insert(ExchangeType::Bitstamp, ws_stream_bitstamp);
 
-        let summary = ob.get_summary();
-        while let Some((key, msg)) = map.next().await {
-            let msg = msg.expect("Failed to get message");
-            // let msg_value: serde_json::Value = serde_json::from_slice(&msg.into_data()).unwrap();
-            // let msg: Vec<&String> = msg_value.as_object().unwrap().keys().collect();
-            tracing::info!(
-                "Got message from {}: {}",
-                key.as_str_name(),
-                msg.into_text().unwrap()
-            );
+        let ob_clone = self.orderbook.clone();
+        tokio::spawn(async move {
+            while let Some((key, msg)) = map.next().await {
+                let msg = msg.expect("Failed to get message");
+                let msg_value: serde_json::Value =
+                    serde_json::from_slice(&msg.into_data()).unwrap();
 
-            if let Err(err) = tx.send(Ok(summary.clone())) {
-                tracing::error!("Error sending summary: {:?}", err);
-                return Err(Status::internal("Error sending summary"));
-            } else {
-                tracing::info!("Summary: {:?}", summary);
+                let mut ob = ob_clone.lock().await;
+                match key {
+                    ExchangeType::Binance => {
+                        let updates = updates_binance(msg_value).expect("failed to get updates");
+                        ob.update(updates);
+                    }
+                    ExchangeType::Bitstamp => {
+                        let data = msg_value["data"].as_object().unwrap();
+                        if data.len() > 0 {
+                            let updates = updates_bitstamp(data).expect("failed to get updates");
+                            ob.update(updates);
+                        }
+                    }
+                };
+
+                if let Err(err) = tx.send(Ok(ob.get_summary())) {
+                    tracing::error!("Error sending summary: {:?}", err);
+                    return Err(Status::internal("Error sending summary"));
+                }
             }
-        }
+            Ok(())
+        });
 
         let stream = UnboundedReceiverStream::new(rx);
         Ok(tonic::Response::new(

@@ -63,7 +63,7 @@ async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::E
     let mut stream = client.watch_summary(request).await?.into_inner();
     while let Some(summary) = stream.next().await {
         match summary {
-            Ok(summary) => println!("summary was updated: {:?}", summary),
+            Ok(summary) => println!("\n{:#?}", summary),
             Err(err) => {
                 return Err(err.into());
             }
