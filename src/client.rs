@@ -22,17 +22,27 @@ enum Command {
 
 #[derive(Debug, Parser)]
 struct SummaryOptions {
+    #[clap(long)]
     symbol: String,
-    limit: Option<i32>,
+    #[clap(long)]
+    limit: Option<u32>,
+    #[clap(long)]
+    min_price: f64,
+    #[clap(long)]
+    max_price: f64,
+    #[clap(long)]
+    power_price: u32,
 }
 
 async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
-    let limit = opts.limit.unwrap_or(10);
     let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
         limit: opts.limit.unwrap_or(10),
+        min_price: opts.min_price,
+        max_price: opts.max_price,
+        power_price: opts.power_price,
     });
 
     let summary = client.get_summary(request).await?.into_inner();
@@ -45,19 +55,17 @@ async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::E
     let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
         limit: opts.limit.unwrap_or(10),
+        min_price: opts.min_price,
+        max_price: opts.max_price,
+        power_price: opts.power_price,
     });
+    println!("stream open");
     let mut stream = client.watch_summary(request).await?.into_inner();
-
     while let Some(summary) = stream.next().await {
         match summary {
-            Ok(summary) => println!("summary was updated: {:?}", summary),
+            Ok(summary) => println!("\n{:#?}", summary),
             Err(err) => {
-                if err.code() == tonic::Code::NotFound {
-                    println!("watched item has been removed from the inventory.");
-                    break;
-                } else {
-                    return Err(err.into());
-                }
+                return Err(err.into());
             }
         };
     }

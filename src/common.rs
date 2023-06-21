@@ -1,4 +1,5 @@
-use orderbook::{ExchangeType, Level, Summary};
+use futures::future::try_join_all;
+use orderbook::{ExchangeType, Level, Summary, Symbols};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_aux::prelude::*;
 use std::{
@@ -6,6 +7,7 @@ use std::{
     ops::{Mul, Sub},
 };
 use strum::IntoEnumIterator;
+use tonic::Status;
 pub mod orderbook {
     tonic::include_proto!("orderbook");
 }
@@ -38,6 +40,135 @@ pub async fn get_symbols_bitstamp(
     Ok(symbols)
 }
 
+pub async fn get_symbols(
+    exchange: ExchangeType,
+) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
+    match exchange {
+        ExchangeType::Binance => get_symbols_binance().await,
+        ExchangeType::Bitstamp => get_symbols_bitstamp().await,
+    }
+}
+
+pub async fn get_symbols_all() -> Result<Symbols, Box<dyn std::error::Error + Send + Sync>> {
+    let symbols_vec = try_join_all(
+        ExchangeType::iter()
+            .map(|exchange| get_symbols(exchange))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("couldn't get symbols");
+
+    let exchange_names: Vec<&str> = ExchangeType::iter().map(|e| e.as_str_name()).collect();
+    let symbols_intersection: HashSet<String> =
+        symbols_vec
+            .into_iter()
+            .enumerate()
+            .fold(HashSet::new(), |acc, (i, set)| {
+                tracing::info!(exchange = &exchange_names[i], symbols_count = set.len());
+                if acc.is_empty() {
+                    set
+                } else {
+                    acc.intersection(&set).map(|s| s.to_string()).collect()
+                }
+            });
+
+    let mut symbols: Vec<String> = symbols_intersection.into_iter().collect();
+
+    symbols.sort();
+
+    tracing::info!(
+        exchanges = format!("{}", exchange_names.join(", ")),
+        symbols_count = symbols.len()
+    );
+
+    Ok(Symbols { symbols })
+}
+
+pub async fn validate_symbol(symbol: &String) -> Result<(), Status> {
+    let symbols = get_symbols_all().await.expect("Failed to get symbols");
+    if !symbols.symbols.iter().any(|s| s == symbol) {
+        tracing::error!("Symbol {} not found on one or more exchanges", symbol);
+        return Err(Status::not_found("Symbol not found"));
+    }
+    Ok(())
+}
+
+pub async fn get_snapshot(
+    exchange: ExchangeType,
+    symbol: &String,
+) -> Result<(ExchangeType, Snapshot), Box<dyn std::error::Error + Send + Sync>> {
+    let url = match exchange {
+        ExchangeType::Binance => {
+            format!(
+                "https://www.binance.us/api/v3/depth?symbol={}&limit=100",
+                symbol
+            )
+        }
+        ExchangeType::Bitstamp => format!(
+            "https://www.bitstamp.net/api/v2/order_book/{}/",
+            symbol.to_lowercase()
+        ),
+    };
+
+    tracing::info!(
+        "Getting snapshot for {} from {}",
+        exchange.as_str_name(),
+        url
+    );
+
+    let mut snapshot = reqwest::get(url)
+        .await
+        .expect(format!("Failed to get snapshot for {}", exchange.as_str_name()).as_str())
+        .json::<Snapshot>()
+        .await
+        .expect(format!("Failed to parse json for {}", exchange.as_str_name()).as_str());
+
+    if exchange == ExchangeType::Bitstamp {
+        snapshot.bids = snapshot.bids[0..100 as usize].to_vec();
+        snapshot.asks = snapshot.asks[0..100 as usize].to_vec();
+    }
+
+    Ok((exchange, snapshot))
+}
+
+pub async fn get_snapshots(
+    symbol: &String,
+) -> Result<Vec<(ExchangeType, Snapshot)>, Box<dyn std::error::Error + Send + Sync>> {
+    let snapshots_vec: Vec<(ExchangeType, Snapshot)> = try_join_all(
+        ExchangeType::iter()
+            .map(|exchange| get_snapshot(exchange, symbol))
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("couldn't get snapshots");
+    Ok(snapshots_vec)
+}
+
+pub fn snapshot_to_summary(exchange: ExchangeType, snapshot: Snapshot) -> Summary {
+    Summary {
+        spread: snapshot.asks[0][0] - snapshot.bids[0][0],
+        bids: snapshot
+            .bids
+            .into_iter()
+            .map(|b| Level {
+                exchange: exchange as i32,
+                price: b[0],
+                amount: b[1],
+            })
+            .collect(),
+
+        asks: snapshot
+            .asks
+            .into_iter()
+            .map(|b| Level {
+                exchange: exchange as i32,
+                price: b[0],
+                amount: b[1],
+            })
+            .collect(),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -45,7 +176,7 @@ pub struct Snapshot {
         alias = "microtimestamp",
         deserialize_with = "deserialize_number_from_string"
     )]
-    pub last_update_id: i64,
+    pub last_update_id: u64,
     #[serde(deserialize_with = "from_str")]
     pub bids: Vec<[f64; 2]>,
     #[serde(deserialize_with = "from_str")]
@@ -65,37 +196,6 @@ where
             ]
         })
         .collect::<Vec<[f64; 2]>>())
-}
-
-pub async fn get_snapshot(
-    exchange: ExchangeType,
-    symbol: String,
-) -> Result<Snapshot, Box<dyn std::error::Error + Send + Sync>> {
-    let url = match exchange {
-        orderbook::ExchangeType::Binance => {
-            format!(
-                "https://www.binance.us/api/v3/depth?symbol={}&limit=1000",
-                symbol
-            )
-        }
-        orderbook::ExchangeType::Bitstamp => {
-            format!("https://www.bitstamp.net/api/v2/order_book/{}/", symbol)
-        }
-    };
-
-    let mut snapshot = reqwest::get(url)
-        .await
-        .expect("Failed to get snapshot")
-        .json::<Snapshot>()
-        .await
-        .expect("Failed to parse json");
-
-    if exchange == ExchangeType::Bitstamp {
-        snapshot.bids = snapshot.bids[0..1000].to_vec();
-        snapshot.asks = snapshot.asks[0..1000].to_vec();
-    }
-
-    Ok(snapshot)
 }
 
 pub type Price = u32;
@@ -118,6 +218,93 @@ impl Default for PricePoint {
     }
 }
 
+#[derive(Debug)]
+pub struct Updates {
+    pub exchange: ExchangeType,
+    pub last_update_id: u64,
+    pub bids: Vec<[f64; 2]>,
+    pub asks: Vec<[f64; 2]>,
+}
+
+pub fn updates_binance(
+    value: serde_json::Value,
+) -> Result<Updates, Box<dyn std::error::Error + Send + Sync>> {
+    let last_update_id = value["E"].as_u64().unwrap();
+
+    let bids = value["b"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            [
+                b[0].as_str().unwrap().parse::<f64>().unwrap(),
+                b[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    let asks = value["a"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            [
+                a[0].as_str().unwrap().parse::<f64>().unwrap(),
+                a[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    Ok(Updates {
+        exchange: ExchangeType::Binance,
+        last_update_id,
+        bids,
+        asks,
+    })
+}
+
+pub fn updates_bitstamp(
+    value: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Updates, Box<dyn std::error::Error + Send + Sync>> {
+    let last_update_id = value["microtimestamp"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+
+    let bids = value["bids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            [
+                b[0].as_str().unwrap().parse::<f64>().unwrap(),
+                b[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    let asks = value["asks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            [
+                a[0].as_str().unwrap().parse::<f64>().unwrap(),
+                a[1].as_str().unwrap().parse::<f64>().unwrap(),
+            ]
+        })
+        .collect::<Vec<[f64; 2]>>();
+
+    Ok(Updates {
+        exchange: ExchangeType::Bitstamp,
+        last_update_id,
+        bids,
+        asks,
+    })
+}
+
+#[derive(Debug, Default)]
 pub struct Orderbook {
     pub ask_min: Price,
     pub bid_max: Price,
@@ -125,33 +312,49 @@ pub struct Orderbook {
     pub price_points: Vec<PricePoint>,
     pub min_price: Price,
     pub max_price: Price,
+    limit: u32,
     power_price: u32,
     power_amount: u32,
 }
 
+// unsafe impl Send for Orderbook {}
+// unsafe impl Sync for Orderbook {}
+
 impl Orderbook {
-    pub fn new(symbol: String, min_price: f64, max_price: f64, power_price: Price) -> Self {
+    pub fn reset(
+        &mut self,
+        symbol: String,
+        limit: u32,
+        min_price: f64,
+        max_price: f64,
+        power_price: Price,
+    ) {
         let min_price = min_price.mul(10u32.pow(power_price) as f64) as Price;
         let max_price = max_price.mul(10u32.pow(power_price) as f64) as Price;
-
-        let mut pps: Vec<PricePoint> = Vec::with_capacity((max_price - min_price) as usize + 1);
+        tracing::info!(
+            "Resetting orderbook for {} with limit {} and price range {} - {}",
+            symbol,
+            limit,
+            min_price,
+            max_price
+        );
+        let mut pps: Vec<PricePoint> = Vec::with_capacity((max_price - min_price) as usize + 2);
 
         let mut idx = 0;
-        while idx < (max_price - min_price) as usize {
+        while idx <= (max_price - min_price) as usize {
             pps.push(PricePoint::default());
             idx += 1;
         }
 
-        Self {
-            symbol,
-            ask_min: u32::MAX,
-            bid_max: 0,
-            price_points: pps,
-            min_price,
-            max_price,
-            power_price,
-            power_amount: 8,
-        }
+        self.symbol = symbol;
+        self.ask_min = u32::MAX;
+        self.bid_max = 0;
+        self.price_points = pps;
+        self.min_price = min_price;
+        self.max_price = max_price;
+        self.limit = limit;
+        self.power_price = power_price;
+        self.power_amount = 8;
     }
 
     fn get_idx(&self, price: Price) -> Price {
@@ -249,7 +452,21 @@ impl Orderbook {
 
         Ok(())
     }
-    pub fn add_snapshot(&mut self, exchange: ExchangeType, snapshot: Snapshot) {
+
+    pub fn update(&mut self, updates: Updates) {
+        updates.bids.into_iter().for_each(|b| {
+            let price = b[0];
+            let amount = b[1];
+            let _ = self.add_bid(updates.exchange.clone(), [price, amount]);
+        });
+        updates.asks.into_iter().for_each(|a| {
+            let price = a[0];
+            let amount = a[1];
+            let _ = self.add_ask(updates.exchange.clone(), [price, amount]);
+        });
+    }
+
+    fn add_snapshot(&mut self, exchange: ExchangeType, snapshot: Snapshot) {
         snapshot.bids.into_iter().for_each(|b| {
             let price = b[0];
             let amount = b[1];
@@ -262,8 +479,17 @@ impl Orderbook {
         });
     }
 
-    pub fn get_summary(&mut self, limit: i32) -> Summary {
-        let mut summary_bids = Vec::<Level>::with_capacity(limit as usize);
+    pub async fn add_snapshots(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let snapshots = get_snapshots(&self.symbol).await?;
+
+        snapshots.into_iter().for_each(|(exchange, snapshot)| {
+            self.add_snapshot(exchange, snapshot);
+        });
+        Ok(())
+    }
+
+    fn get_summary_bids(&self) -> Vec<Level> {
+        let mut summary_bids = Vec::<Level>::with_capacity(self.limit as usize);
         let mut counter = 0;
         let mut bid_max = self.bid_max;
         loop {
@@ -279,18 +505,21 @@ impl Orderbook {
                 .collect::<Vec<Level>>();
 
             ob_bids.sort_by(|a, b| b.amount.partial_cmp(&a.amount).unwrap());
-            counter += ob_bids.len() as i32;
+            counter += ob_bids.len() as u32;
             summary_bids.append(&mut ob_bids);
 
-            if counter >= limit || bid_max == self.min_price {
+            if counter >= self.limit || bid_max == self.min_price {
                 break;
             }
             bid_max -= 1;
         }
+        summary_bids
+    }
 
-        counter = 0;
+    fn get_summary_asks(&self) -> Vec<Level> {
+        let mut summary_asks = Vec::<Level>::with_capacity(self.limit as usize);
+        let mut counter = 0;
         let mut ask_min = self.ask_min;
-        let mut summary_asks = Vec::<Level>::with_capacity(limit as usize);
         loop {
             let mut ob_asks: Vec<Level> = self
                 .get_price_point(ask_min)
@@ -304,14 +533,21 @@ impl Orderbook {
                 .collect::<Vec<Level>>();
 
             ob_asks.sort_by(|a, b| a.amount.partial_cmp(&b.amount).unwrap());
-            counter += ob_asks.len() as i32;
+            counter += ob_asks.len() as u32;
             summary_asks.append(&mut ob_asks);
 
-            if counter >= limit || ask_min == self.max_price {
+            if counter >= self.limit || ask_min == self.max_price {
                 break;
             }
             ask_min += 1;
         }
+        summary_asks
+    }
+
+    pub fn get_summary(&self) -> Summary {
+        let summary_asks = self.get_summary_asks();
+        let summary_bids = self.get_summary_bids();
+
         Summary {
             spread: summary_asks[0].price - summary_bids[0].price,
             bids: summary_bids,
@@ -337,14 +573,16 @@ mod tests {
     #[test]
     fn it_creates_an_orderbook() {
         let symbol = "BTCUSD".to_string();
-        Orderbook::new(symbol, 25_000.0, 28_000.0, 2);
+        let mut ob = Orderbook::default();
+        ob.reset(symbol, 10, 25_000.0, 28_000.0, 2);
         print_memory_usage();
     }
 
     #[test]
     fn adds_a_bid() {
         let symbol = "BTCUSD".to_string();
-        let mut ob = Orderbook::new(symbol, 24_000.0, 28_000.0, 2);
+        let mut ob = Orderbook::default();
+        ob.reset(symbol, 10, 24_000.0, 28_000.0, 2);
 
         let price = 26_000.0;
         let amount = 1.0;
@@ -361,7 +599,8 @@ mod tests {
     #[test]
     fn removes_a_bid() {
         let symbol = "BTCUSD".to_string();
-        let mut ob = Orderbook::new(symbol, 24_000.0, 24_100.0, 2);
+        let mut ob = Orderbook::default();
+        ob.reset(symbol, 10, 24_000.0, 24_100.0, 2);
 
         let prices = [24_051.0, 24_050.0];
         let amount = 1.0;
