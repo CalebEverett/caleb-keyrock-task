@@ -17,7 +17,10 @@ enum ExchangeType {
 
 message SummaryRequest {
   string symbol = 1;
-  int32 limit = 2;
+  uint32 limit = 2;
+  double min_price = 3;
+  double max_price = 4;
+  uint32 power_price = 5;
 }
 
 message Symbols { repeated string symbols = 1; }
