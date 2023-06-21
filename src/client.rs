@@ -34,6 +34,19 @@ struct SummaryOptions {
     power_price: u32,
 }
 
+/// Gets a list of symbols present on all exchanges.
+async fn get_symbols() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
+
+    let request = tonic::Request::new(Empty {});
+    let symbols = client.get_symbols(request).await?.into_inner();
+    for symbol in symbols.symbols {
+        println!("{}", symbol);
+    }
+    Ok(())
+}
+
+/// Gets a summary for a given symbol from the most recently available snapshots from the exchanges.
 async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
@@ -50,6 +63,7 @@ async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// Streams a summary of the aggregatge orderbook for a given symbol, updated for changes from all exchanges.
 async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
     let request = tonic::Request::new(SummaryRequest {
@@ -71,17 +85,6 @@ async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::E
     }
     println!("stream closed");
 
-    Ok(())
-}
-
-async fn get_symbols() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
-
-    let request = tonic::Request::new(Empty {});
-    let symbols = client.get_symbols(request).await?.into_inner();
-    for symbol in symbols.symbols {
-        println!("{}", symbol);
-    }
     Ok(())
 }
 

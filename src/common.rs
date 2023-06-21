@@ -12,6 +12,7 @@ pub mod orderbook {
     tonic::include_proto!("orderbook");
 }
 
+/// Gets available symbosl from binanc.us.
 pub async fn get_symbols_binance(
 ) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
     let symbols = reqwest::get("https://api.binance.us/api/v3/exchangeInfo")
@@ -26,6 +27,7 @@ pub async fn get_symbols_binance(
     Ok(symbols)
 }
 
+/// Gets available symbols bitstamp.
 pub async fn get_symbols_bitstamp(
 ) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
     let symbols = reqwest::get("https://www.bitstamp.net/api/v2/ticker/")
@@ -40,6 +42,7 @@ pub async fn get_symbols_bitstamp(
     Ok(symbols)
 }
 
+/// Gets available symbols for a given exchange.
 pub async fn get_symbols(
     exchange: ExchangeType,
 ) -> Result<HashSet<String>, Box<dyn std::error::Error + Send + Sync>> {
@@ -49,6 +52,7 @@ pub async fn get_symbols(
     }
 }
 
+/// Gets symbols available on all exchanges.
 pub async fn get_symbols_all() -> Result<Symbols, Box<dyn std::error::Error + Send + Sync>> {
     let symbols_vec = try_join_all(
         ExchangeType::iter()
@@ -84,6 +88,7 @@ pub async fn get_symbols_all() -> Result<Symbols, Box<dyn std::error::Error + Se
     Ok(Symbols { symbols })
 }
 
+/// Validates a symbol is available on all exchanges.
 pub async fn validate_symbol(symbol: &String) -> Result<(), Status> {
     let symbols = get_symbols_all().await.expect("Failed to get symbols");
     if !symbols.symbols.iter().any(|s| s == symbol) {
@@ -93,6 +98,7 @@ pub async fn validate_symbol(symbol: &String) -> Result<(), Status> {
     Ok(())
 }
 
+/// Gets a orderbook snapshot with up to 1000 levels for a given exchange and symbol.
 pub async fn get_snapshot(
     exchange: ExchangeType,
     symbol: &String,
@@ -100,7 +106,7 @@ pub async fn get_snapshot(
     let url = match exchange {
         ExchangeType::Binance => {
             format!(
-                "https://www.binance.us/api/v3/depth?symbol={}&limit=100",
+                "https://www.binance.us/api/v3/depth?symbol={}&limit=1000",
                 symbol
             )
         }
@@ -124,13 +130,14 @@ pub async fn get_snapshot(
         .expect(format!("Failed to parse json for {}", exchange.as_str_name()).as_str());
 
     if exchange == ExchangeType::Bitstamp {
-        snapshot.bids = snapshot.bids[0..100 as usize].to_vec();
-        snapshot.asks = snapshot.asks[0..100 as usize].to_vec();
+        snapshot.bids = snapshot.bids[0..1000 as usize].to_vec();
+        snapshot.asks = snapshot.asks[0..1000 as usize].to_vec();
     }
 
     Ok((exchange, snapshot))
 }
 
+/// Gets snapshots for all exchanges for a given symbol.
 pub async fn get_snapshots(
     symbol: &String,
 ) -> Result<Vec<(ExchangeType, Snapshot)>, Box<dyn std::error::Error + Send + Sync>> {
@@ -144,31 +151,7 @@ pub async fn get_snapshots(
     Ok(snapshots_vec)
 }
 
-pub fn snapshot_to_summary(exchange: ExchangeType, snapshot: Snapshot) -> Summary {
-    Summary {
-        spread: snapshot.asks[0][0] - snapshot.bids[0][0],
-        bids: snapshot
-            .bids
-            .into_iter()
-            .map(|b| Level {
-                exchange: exchange as i32,
-                price: b[0],
-                amount: b[1],
-            })
-            .collect(),
-
-        asks: snapshot
-            .asks
-            .into_iter()
-            .map(|b| Level {
-                exchange: exchange as i32,
-                price: b[0],
-                amount: b[1],
-            })
-            .collect(),
-    }
-}
-
+/// Structure to hold a snapshot of an orderbook.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -201,6 +184,8 @@ where
 pub type Price = u32;
 pub type Amount = u64;
 
+/// Holds levels for each price point. Entries will at most be equal
+/// to the number of exchanges.
 #[derive(Debug)]
 pub struct PricePoint {
     pub bids: HashMap<ExchangeType, Amount>,
@@ -218,6 +203,7 @@ impl Default for PricePoint {
     }
 }
 
+/// Structure to hold update data.
 #[derive(Debug)]
 pub struct Updates {
     pub exchange: ExchangeType,
@@ -226,6 +212,7 @@ pub struct Updates {
     pub asks: Vec<[f64; 2]>,
 }
 
+/// Deserializes updates from binance.
 pub fn updates_binance(
     value: serde_json::Value,
 ) -> Result<Updates, Box<dyn std::error::Error + Send + Sync>> {
@@ -263,6 +250,7 @@ pub fn updates_binance(
     })
 }
 
+/// Deserializes updates from bitstamp.
 pub fn updates_bitstamp(
     value: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Updates, Box<dyn std::error::Error + Send + Sync>> {
@@ -304,6 +292,7 @@ pub fn updates_bitstamp(
     })
 }
 
+/// Orderbook structure.
 #[derive(Debug, Default)]
 pub struct Orderbook {
     pub ask_min: Price,
@@ -317,10 +306,9 @@ pub struct Orderbook {
     power_amount: u32,
 }
 
-// unsafe impl Send for Orderbook {}
-// unsafe impl Sync for Orderbook {}
-
 impl Orderbook {
+    /// Initializes an already creaated orderbook to facilitate Arc<Mutex<Orderbook>>
+    /// on the server.
     pub fn reset(
         &mut self,
         symbol: String,
@@ -357,28 +345,34 @@ impl Orderbook {
         self.power_amount = 8;
     }
 
+    /// Gets the index for a given price.
     fn get_idx(&self, price: Price) -> Price {
         price.sub(self.min_price)
     }
 
+    /// Gets storage representation of price from its display price.
     fn get_price(&self, price: f64) -> Price {
         (price.mul(10u32.pow(self.power_price) as f64)) as Price
     }
 
+    /// Gets storage representation of a quantity from its display quantity.
     fn get_amount(&self, amount: f64) -> Amount {
         (amount.mul(10u64.pow(self.power_amount) as f64)) as Amount
     }
 
+    /// Retrieves a price point from storage.
     fn get_price_point(&self, price: Price) -> &PricePoint {
         let idx = self.get_idx(price) as usize;
         &self.price_points[idx]
     }
 
+    /// Retrieves a mutable price point from storage.
     fn get_price_point_mut(&mut self, price: Price) -> &mut PricePoint {
         let idx = self.get_idx(price) as usize;
         &mut self.price_points[idx]
     }
 
+    /// Adds, modifies or removes a bid from the order book.
     pub fn add_bid(
         &mut self,
         exchange: ExchangeType,
@@ -416,6 +410,7 @@ impl Orderbook {
         Ok(())
     }
 
+    /// Adds, modifies or removes an ask from the order book.
     pub fn add_ask(
         &mut self,
         exchange: ExchangeType,
@@ -453,6 +448,7 @@ impl Orderbook {
         Ok(())
     }
 
+    /// Processes updates to the orderbook from an exchange.
     pub fn update(&mut self, updates: Updates) {
         updates.bids.into_iter().for_each(|b| {
             let price = b[0];
@@ -466,6 +462,8 @@ impl Orderbook {
         });
     }
 
+    /// Processes an orderbook snapshot from an exchange into the orderbook.
+    /// TODO: Try to parallelize this - the number of collisions is likely to be low.
     fn add_snapshot(&mut self, exchange: ExchangeType, snapshot: Snapshot) {
         snapshot.bids.into_iter().for_each(|b| {
             let price = b[0];
@@ -479,6 +477,7 @@ impl Orderbook {
         });
     }
 
+    /// Adds snapshots from all exchanges for a given symbol.
     pub async fn add_snapshots(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let snapshots = get_snapshots(&self.symbol).await?;
 
@@ -488,6 +487,7 @@ impl Orderbook {
         Ok(())
     }
 
+    /// Collect bids for the summary.
     fn get_summary_bids(&self) -> Vec<Level> {
         let mut summary_bids = Vec::<Level>::with_capacity(self.limit as usize);
         let mut counter = 0;
@@ -516,6 +516,7 @@ impl Orderbook {
         summary_bids
     }
 
+    /// Collect asks for the summary.
     fn get_summary_asks(&self) -> Vec<Level> {
         let mut summary_asks = Vec::<Level>::with_capacity(self.limit as usize);
         let mut counter = 0;
@@ -544,6 +545,8 @@ impl Orderbook {
         summary_asks
     }
 
+    /// Create the summary.
+    /// TODO: Try to parallelize this - the orderbook is only being read.
     pub fn get_summary(&self) -> Summary {
         let summary_asks = self.get_summary_asks();
         let summary_bids = self.get_summary_bids();

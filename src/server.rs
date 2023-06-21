@@ -40,6 +40,7 @@ impl Default for OrderbookSummary {
 impl OrderbookAggregator for OrderbookSummary {
     type WatchSummaryStream = Pin<Box<dyn Stream<Item = Result<Summary, Status>> + Send>>;
 
+    /// Returns a list of symbols present on all exchanges.
     async fn get_symbols(
         &self,
         request: tonic::Request<Empty>,
@@ -51,6 +52,8 @@ impl OrderbookAggregator for OrderbookSummary {
         Ok(response)
     }
 
+    /// Gets an orderbook summary for a given symbol from the most recently available
+    /// snapshots from teh exchanges.
     async fn get_summary(
         &self,
         request: tonic::Request<SummaryRequest>,
@@ -73,6 +76,7 @@ impl OrderbookAggregator for OrderbookSummary {
         Ok(response)
     }
 
+    /// Streaming summary for a given symbol, updated for changes from all exchanges.
     async fn watch_summary(
         &self,
         request: tonic::Request<SummaryRequest>,

@@ -1,5 +1,49 @@
 # caleb-keyrock-task
 
+## Solution
+
+### General Approach
+
+1. Receive a request with symbol and limit properties
+1. Validate the symbol to be included is in the intersection of the available symbols from each exchange.
+1. Fetch orderbook snapshots from exchanges - deserializing json to a Snapshot struct, which is a vec of bids, a vec of asks and last_updated_id. Bids and asks are [f64; 2]. The exchanges are determined by an ExchangeType enum, currently with just Binance (US) and Bitstamp as variants, but everything is set up to be able to accommodate a variable number of exchanges with just the addition of another variant and associated deserializer.
+1. Insert snapshots into Orderbook struct. Orderbook struct consists of price_points which is a vec of PricePoint structs, which are a bids hashmap and an asks hashmap. The hashmaps are <ExchangeType, Amount>, where Amount is a u64. The capacity of the price_point vec is determined by a min_price, a max_price and the number of decimal places to include in the prices. The min_ask and max_bid are updated as bids and asks are inserted.
+1. Update orderbook from map of streams for each exchange websocket book diff endpoint.
+1. Create Summary message. Iterate through orderbook bids starting with max_bid, decrementing and creating Levels from hashmaps until the number specified by limit have been collected. Iterate through order book asks, incrementing starting with min_ask.
+   Send summary message
+
+The orderbook structure was inspired by [rust-orderbook](https://github.com/brettfazio/orderbook).
+
+This solution trades off additional memory usage for the vec of price points for the speed of being able to insert and remove bids and asks in constant time. The space complexity is O(n) where n is the number of price points. The time complexity is O(1) for inserting and removing bids and asks and O(k) for creating the summary where k is a function of the number of levels to include in the summary and the number of price points.
+
+It can manage an aggregate of books with 1000 levels and keep up with providing summaries with 500 levels.
+
+### Running the Solution
+
+A command line interface is provided to run the solution. It takes the following arguments:
+
+```
+--symbol
+--limit
+--min_price
+--max_price
+--power_price
+```
+
+The symbol is the currency pair to be included in the orderbook. The limit is the number of levels to be included in the summary. The min_price and max_price are the minimum and maximum prices to be included in the orderbook and should be set around the current market price. The power_price is the number of decimal places to include in the prices. The order book is managed without decimals - asset amounts are represented as u64 up to 8 decicmal places and prices are represented as u32. The power_price is used to convert the prices to u32 for storage and to convert back to f64 for display.
+
+### Further Enahncements
+
+1. Add test for order book and summary creation from downloaded snapshots.
+1. Refactor common.rs code into separate files.
+1. Check last updated from websocket diff stream against last updated from snapshots.
+1. Documentation.
+1. Parallelize creation of summary asks and bids - only need to reference ob - cloning data to summary asks and bids separately
+1. Check to see if updating bid and ash hashmaps with zero amount and filtering based on amount not being zero is faster instead of removing zero entries
+1. Do a proper analysis of space and time complexity.
+1. Benchmarks.
+1. Create structs to deseriaize updated into instead of using serde_json::Value.
+
 ## Algo Technical Challenge - Q1 2020 - (L2)
 
 ### The Challenge
