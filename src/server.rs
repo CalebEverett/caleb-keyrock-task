@@ -1,27 +1,19 @@
 use dotenv::dotenv;
-use futures::{lock::Mutex, SinkExt, Stream};
-use serde_json::json;
+use futures::{lock::Mutex, Stream};
 use std::{pin::Pin, sync::Arc};
-use tokio_stream::StreamMap;
-use tokio_tungstenite::tungstenite::Message;
-
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::Result};
+use tokio_tungstenite::tungstenite::Result;
 use tonic::{transport::Server, Status};
-use url::Url;
 
 use ckt_common::{
-    get_symbols_all,
+    get_stream, get_symbols_all,
     orderbook::{
         orderbook_aggregator_server::{OrderbookAggregator, OrderbookAggregatorServer},
         Empty, ExchangeType, Summary, SummaryRequest, Symbols,
     },
     updates_binance, updates_bitstamp, validate_symbol, Orderbook,
 };
-
-const BASE_WS_BINANCE: &str = "wss://stream.binance.us:9443";
-const BASE_WS_BISTAMP: &str = "wss://ws.bitstamp.net";
 
 #[derive(Debug)]
 pub struct OrderbookSummary {
@@ -99,35 +91,7 @@ impl OrderbookAggregator for OrderbookSummary {
             ob.add_snapshots().await.expect("Could not add snapshots");
         }
 
-        let mut map = StreamMap::new();
-        let ws_url_binance = Url::parse(BASE_WS_BINANCE)
-            .expect("bad binance url")
-            .join("ws/btcusdt@depth")
-            .unwrap();
-
-        let (ws_stream_binance, _) = connect_async(&ws_url_binance)
-            .await
-            .expect(format!("Failed to connect to {}", &ws_url_binance.as_str()).as_str());
-
-        map.insert(ExchangeType::Binance, ws_stream_binance);
-
-        let ws_url_bitstamp = Url::parse(BASE_WS_BISTAMP).expect("bad bitstamp url");
-        let subscribe_msg = json!({
-            "event": "bts:subscribe",
-            "data": {
-                "channel": "diff_order_book_btcusdt"
-            }
-        });
-
-        let (mut ws_stream_bitstamp, _) = connect_async(&ws_url_bitstamp)
-            .await
-            .expect(format!("Failed to connect to {}", &ws_url_bitstamp.as_str()).as_str());
-
-        ws_stream_bitstamp
-            .start_send_unpin(Message::Text(subscribe_msg.to_string()))
-            .expect("Failed to send subscribe message to bitstamp");
-
-        map.insert(ExchangeType::Bitstamp, ws_stream_bitstamp);
+        let mut map = get_stream(symbol).await.expect("Could not get stream");
 
         let ob_clone = self.orderbook.clone();
         tokio::spawn(async move {

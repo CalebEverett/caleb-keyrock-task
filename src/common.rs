@@ -1,4 +1,4 @@
-use futures::future::try_join_all;
+use futures::{future::try_join_all, SinkExt};
 use orderbook::{ExchangeType, Level, Summary, Symbols};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_aux::prelude::*;
@@ -7,9 +7,63 @@ use std::{
     ops::{Mul, Sub},
 };
 use strum::IntoEnumIterator;
+use tokio::net::TcpStream;
+use tokio_stream::StreamMap;
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tonic::Status;
 pub mod orderbook {
     tonic::include_proto!("orderbook");
+}
+
+const BASE_WS_BINANCE: &str = "wss://stream.binance.us:9443";
+const BASE_WS_BISTAMP: &str = "wss://ws.bitstamp.net";
+
+/// Gets a websocket stream for each exchange and returns a map of them.
+pub async fn get_stream(
+    symbol: String,
+) -> Result<
+    StreamMap<ExchangeType, WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let mut map = StreamMap::new();
+    let symbol = symbol.to_lowercase();
+
+    for exchange in ExchangeType::iter() {
+        match exchange {
+            ExchangeType::Binance => {
+                let ws_url_binance = url::Url::parse(BASE_WS_BINANCE)
+                    .expect("bad binance url")
+                    .join(&format!("ws/{}@depth", symbol))
+                    .unwrap();
+
+                let (ws_stream_binance, _) = connect_async(&ws_url_binance)
+                    .await
+                    .expect(format!("Failed to connect to {}", &ws_url_binance.as_str()).as_str());
+
+                map.insert(ExchangeType::Binance, ws_stream_binance);
+            }
+            ExchangeType::Bitstamp => {
+                let ws_url_bitstamp = url::Url::parse(BASE_WS_BISTAMP).expect("bad bitstamp url");
+                let subscribe_msg = serde_json::json!({
+                    "event": "bts:subscribe",
+                    "data": {
+                        "channel": format!("diff_order_book_{}", symbol)
+                    }
+                });
+
+                let (mut ws_stream_bitstamp, _) = connect_async(&ws_url_bitstamp)
+                    .await
+                    .expect(format!("Failed to connect to {}", &ws_url_bitstamp.as_str()).as_str());
+
+                ws_stream_bitstamp
+                    .start_send_unpin(Message::Text(subscribe_msg.to_string()))
+                    .expect("Failed to send subscribe message to bitstamp");
+
+                map.insert(ExchangeType::Bitstamp, ws_stream_bitstamp);
+            }
+        }
+    }
+    Ok(map)
 }
 
 /// Gets available symbosl from binanc.us.

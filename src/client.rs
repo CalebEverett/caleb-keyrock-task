@@ -73,7 +73,7 @@ async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::E
         max_price: opts.max_price,
         power_price: opts.power_price,
     });
-    println!("stream open");
+
     let mut stream = client.watch_summary(request).await?.into_inner();
     while let Some(summary) = stream.next().await {
         match summary {

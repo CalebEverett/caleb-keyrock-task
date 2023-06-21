@@ -43,7 +43,7 @@ The symbol is the currency pair to be included in the orderbook. The limit is th
 
 ### Further Enahncements
 
-1. Add test for order book and summary creation from downloaded snapshots.
+1. More tests, including one for order book and summary creation from downloaded snapshots.
 1. Refactor common.rs code into separate files.
 1. Check last updated from websocket diff stream against last updated from snapshots.
 1. Documentation.
