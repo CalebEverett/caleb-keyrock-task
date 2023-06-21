@@ -1,5 +1,14 @@
 # caleb-keyrock-task
 
+## The Challenge
+
+Using (ideally) Rust, or node.js, code a mini project that:
+
+1. connects to two exchanges' websocket feeds at the same time,
+1. pulls order books, using these streaming connections, for a given traded pair of currencies (configurable), from each exchange,
+1. merges and sorts the order books to create a combined order book,
+1. from the combined book, publishes the spread, top ten bids, and top ten asks, as a stream, through a gRPC server.
+
 ## Solution
 
 ### General Approach
@@ -45,15 +54,6 @@ The symbol is the currency pair to be included in the orderbook. The limit is th
 1. Create structs to deseriaize updated into instead of using serde_json::Value.
 
 ## Algo Technical Challenge - Q1 2020 - (L2)
-
-### The Challenge
-
-Using (ideally) Rust, or node.js, code a mini project that:
-
-1. connects to two exchanges' websocket feeds at the same time,
-1. pulls order books, using these streaming connections, for a given traded pair of currencies (configurable), from each exchange,
-1. merges and sorts the order books to create a combined order book,
-1. from the combined book, publishes the spread, top ten bids, and top ten asks, as a stream, through a gRPC server.
 
 ### Background
 
