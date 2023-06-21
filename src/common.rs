@@ -631,8 +631,9 @@ mod tests {
     fn it_creates_an_orderbook() {
         let symbol = "BTCUSD".to_string();
         let mut ob = Orderbook::default();
-        ob.reset(symbol, 10, 25_000.0, 28_000.0, 2);
+        ob.reset(symbol, 10, 25_000.0, 30_000.0, 2);
         print_memory_usage();
+        assert!(false)
     }
 
     #[test]

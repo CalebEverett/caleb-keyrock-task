@@ -25,7 +25,7 @@ The orderbook structure was inspired by [rust-orderbook](https://github.com/bret
 
 This solution trades off additional memory usage for the vec of price points for the speed of being able to insert and remove bids and asks in constant time. The space complexity is O(n) where n is the number of price points. The time complexity is O(1) for inserting and removing bids and asks and O(k) for creating the summary where k is a function of the number of levels to include in the summary and the number of price points.
 
-It can manage an aggregate of books with 1000 levels and keep up with providing summaries with 500 levels.
+An orderbook with 5,000,000 price points and 500 levels in the summary uses approximately 1.5GB of memory and still manages to keep up with the websocket diff stream. The orderbook could be optimized to use less memory by using a linked list instead of a vec for the price points, but this would increase the time complexity for inserting and removing bids and asks to O(n), but likely reduce the time required to create the summaries.
 
 ### Running the Solution
 
