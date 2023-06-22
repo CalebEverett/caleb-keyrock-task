@@ -6,13 +6,15 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_tungstenite::tungstenite::Result;
 use tonic::{transport::Server, Status};
 
-use ckt_common::{
-    get_stream, get_symbols_all,
-    orderbook::{
+use ckt_lib::{
+    booksummary::{
         orderbook_aggregator_server::{OrderbookAggregator, OrderbookAggregatorServer},
         Empty, ExchangeType, Summary, SummaryRequest, Symbols,
     },
-    updates_binance, updates_bitstamp, validate_symbol, Orderbook,
+    orderbook::Orderbook,
+    symbol::{get_symbols_all, validate_symbol},
+    update::get_stream,
+    update::{updates_binance, updates_bitstamp},
 };
 
 #[derive(Debug)]
@@ -52,15 +54,15 @@ impl OrderbookAggregator for OrderbookSummary {
     ) -> Result<tonic::Response<Summary>, Status> {
         let SummaryRequest {
             symbol,
-            limit,
+            levels,
             min_price,
             max_price,
-            power_price,
+            decimals,
         } = request.into_inner();
 
         validate_symbol(&symbol).await?;
         let mut ob = self.orderbook.lock().await;
-        ob.reset(symbol.clone(), limit, min_price, max_price, power_price);
+        ob.reset(symbol.clone(), levels, min_price, max_price, decimals);
         ob.add_snapshots().await.expect("Could not add snapshots");
 
         let summary = ob.get_summary();
@@ -75,10 +77,10 @@ impl OrderbookAggregator for OrderbookSummary {
     ) -> Result<tonic::Response<Self::WatchSummaryStream>, Status> {
         let SummaryRequest {
             symbol,
-            limit,
+            levels,
             min_price,
             max_price,
-            power_price,
+            decimals,
         } = request.into_inner();
         tracing::info!("Got a request for symbol {}", symbol,);
         let (tx, rx) = mpsc::unbounded_channel();
@@ -87,7 +89,7 @@ impl OrderbookAggregator for OrderbookSummary {
         {
             let ob_clone = self.orderbook.clone();
             let mut ob = ob_clone.lock().await;
-            ob.reset(symbol.clone(), limit, min_price, max_price, power_price);
+            ob.reset(symbol.clone(), levels, min_price, max_price, decimals);
             ob.add_snapshots().await.expect("Could not add snapshots");
         }
 
@@ -95,22 +97,25 @@ impl OrderbookAggregator for OrderbookSummary {
 
         let ob_clone = self.orderbook.clone();
         tokio::spawn(async move {
+            let mut ob = ob_clone.lock().await;
             while let Some((key, msg)) = map.next().await {
                 let msg = msg.expect("Failed to get message");
-                let msg_value: serde_json::Value =
-                    serde_json::from_slice(&msg.into_data()).unwrap();
 
-                let mut ob = ob_clone.lock().await;
-                match key {
-                    ExchangeType::Binance => {
-                        let updates = updates_binance(msg_value).expect("failed to get updates");
-                        ob.update(updates);
-                    }
-                    ExchangeType::Bitstamp => {
-                        let data = msg_value["data"].as_object().unwrap();
-                        if data.len() > 0 {
-                            let updates = updates_bitstamp(data).expect("failed to get updates");
-                            ob.update(updates);
+                if let Ok(msg_value) = serde_json::from_slice(&msg.into_data()) {
+                    match key {
+                        ExchangeType::Binance => {
+                            if let Ok(updates) = updates_binance(msg_value) {
+                                ob.update(updates);
+                            };
+                        }
+                        ExchangeType::Bitstamp => {
+                            if let Some(data) = msg_value["data"].as_object() {
+                                if data.len() > 0 {
+                                    let updates =
+                                        updates_bitstamp(data).expect("failed to get updates");
+                                    ob.update(updates);
+                                }
+                            };
                         }
                     }
                 };

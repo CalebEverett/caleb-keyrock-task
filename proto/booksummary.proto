@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package orderbook;
+package booksummary;
 
 service OrderbookAggregator {
   rpc GetSummary(SummaryRequest) returns (Summary);
@@ -17,10 +17,10 @@ enum ExchangeType {
 
 message SummaryRequest {
   string symbol = 1;
-  uint32 limit = 2;
+  uint32 levels = 2;
   double min_price = 3;
   double max_price = 4;
-  uint32 power_price = 5;
+  uint32 decimals = 5;
 }
 
 message Symbols { repeated string symbols = 1; }
@@ -34,5 +34,5 @@ message Summary {
 message Level {
   ExchangeType exchange = 1;
   double price = 2;
-  double amount = 3;
+  double quantity = 3;
 }

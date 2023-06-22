@@ -13,12 +13,12 @@ Using (ideally) Rust, or node.js, code a mini project that:
 
 ### General Approach
 
-1. Receive a request with symbol and limit properties
+1. Receive a request with symbol and levels properties
 1. Validate the symbol to be included is in the intersection of the available symbols from each exchange.
 1. Fetch orderbook snapshots from exchanges - deserializing json to a Snapshot struct, which is a vec of bids, a vec of asks and last_updated_id. Bids and asks are [f64; 2]. The exchanges are determined by an ExchangeType enum, currently with just Binance (US) and Bitstamp as variants, but everything is set up to be able to accommodate a variable number of exchanges with just the addition of another variant and associated deserializer.
-1. Insert snapshots into Orderbook struct. Orderbook struct consists of price_points which is a vec of PricePoint structs, which are a bids hashmap and an asks hashmap. The hashmaps are <ExchangeType, Amount>, where Amount is a u64. The capacity of the price_point vec is determined by a min_price, a max_price and the number of decimal places to include in the prices. The min_ask and max_bid are updated as bids and asks are inserted.
+1. Insert snapshots into Orderbook struct. Orderbook struct consists of price_points which is a vec of PricePoint structs, which are a bids hashmap and an asks hashmap. The hashmaps are <ExchangeType, Quantity>, where Quantity is a u64. The capacity of the price_point vec is determined by a min_price, a max_price and the number of decimal places to include in the prices. The min_ask and max_bid are updated as bids and asks are inserted.
 1. Update orderbook from map of streams for each exchange websocket book diff endpoint.
-1. Create Summary message. Iterate through orderbook bids starting with max_bid, decrementing and creating Levels from hashmaps until the number specified by limit have been collected. Iterate through order book asks, incrementing starting with min_ask.
+1. Create Summary message. Iterate through orderbook bids starting with max_bid, decrementing and creating Levels from hashmaps until the number specified by levels have been collected. Iterate through order book asks, incrementing starting with min_ask.
    Send summary message
 
 The orderbook structure was inspired by [rust-orderbook](https://github.com/brettfazio/orderbook).
@@ -33,22 +33,24 @@ A command line interface is provided to run the solution. It takes the following
 
 ```
 --symbol
---limit
+--levels
 --min_price
 --max_price
---power_price
+--decimals
 ```
 
-The symbol is the currency pair to be included in the orderbook. The limit is the number of levels to be included in the summary. The min_price and max_price are the minimum and maximum prices to be included in the orderbook and should be set around the current market price. The power_price is the number of decimal places to include in the prices. The order book is managed without decimals - asset amounts are represented as u64 up to 8 decicmal places and prices are represented as u32. The power_price is used to convert the prices to u32 for storage and to convert back to f64 for display.
+The symbol is the currency pair to be included in the orderbook. Levels is the number of levels to be included in the summary. The min_price and max_price are the minimum and maximum prices to be included in the orderbook and should be set around the current market price. Decimals is the number of decimal places to include in the prices. The order book is managed without decimals - asset quantities are represented as u64 up to 8 decicmal places and prices are represented as u32. The decimals is used to convert the prices to u32 for storage and to convert back to f64 for display.
 
 ### Further Enahncements
 
 1. More tests, including one for order book and summary creation from downloaded snapshots.
-1. Refactor common.rs code into separate files.
+1. Error handling.
 1. Check last updated from websocket diff stream against last updated from snapshots.
 1. Documentation.
+1. Parallelize update of bids and asks
+1. Explore parellelizing updates from exchange websocket diff streams
 1. Parallelize creation of summary asks and bids - only need to reference ob - cloning data to summary asks and bids separately
-1. Check to see if updating bid and ash hashmaps with zero amount and filtering based on amount not being zero is faster instead of removing zero entries
+1. Check to see if updating bid and ash hashmaps with zero quantity and filtering based on quantity not being zero is faster instead of removing zero entries
 1. Do a proper analysis of space and time complexity.
 1. Benchmarks.
 1. Create structs to deseriaize updated into instead of using serde_json::Value.
@@ -63,7 +65,7 @@ A market is generally a pair of currencies and an exchange where they are traded
 
 #### Order books
 
-Orders at which people are prepared to buy and sell are send to an exchange, such as Binance. The exchange will usually match the buy and sell orders that approach a market ‘mid-price’. The difference between the best ask price and the best bid price is called the spread. The final, merged order book should have the best deals first. That means, if I am selling currency and I want to be the first one to sell, I should be at the best position for this which means am selling the largest amount at the lowest price. Think about this when sorting each side of the order book.
+Orders at which people are prepared to buy and sell are send to an exchange, such as Binance. The exchange will usually match the buy and sell orders that approach a market ‘mid-price’. The difference between the best ask price and the best bid price is called the spread. The final, merged order book should have the best deals first. That means, if I am selling currency and I want to be the first one to sell, I should be at the best position for this which means am selling the largest quantity at the lowest price. Think about this when sorting each side of the order book.
 
 #### gRPC
 
@@ -91,7 +93,7 @@ message Summary {
 message Level {
     string exchange = 1;
     double price = 2;
-    double amount = 3;
+    double quantity = 3;
 }
 ```
 
@@ -132,19 +134,19 @@ The output should be standardised to this type of format (with 10 asks and 10 bi
 {
 “spread”: 2.72,
 “asks”: [
-    { exchange: "binance", price: 8491.25, amount: 0.008 },
-    { exchange: "coinbase", price: 8496.37, amount: 0.0303 },
+    { exchange: "binance", price: 8491.25, quantity: 0.008 },
+    { exchange: "coinbase", price: 8496.37, quantity: 0.0303 },
     ...
     ],
 “bids”: [
-    { exchange: "binance", price: 8488.53, amount: 0.002 },
-    { exchange: "kraken", price: 8484.71, amount: 1.0959 },
+    { exchange: "binance", price: 8488.53, quantity: 0.002 },
+    { exchange: "kraken", price: 8484.71, quantity: 1.0959 },
     ...
     ]
 }
 ```
 
-Here you can see arrays of [ price, amount ] values in JSON representation - but your solution will be streaming from a gRPC server. Values here are made up examples and do not represent what your solution should output.
+Here you can see arrays of [ price, quantity ] values in JSON representation - but your solution will be streaming from a gRPC server. Values here are made up examples and do not represent what your solution should output.
 
 You should do this from the Web-socket endpoints the exchanges offer (see links below for docs). We want to be able to provide a pair (that will exist in the exchanges) and have your code stream the spread and the top 10 asks and bids for each exchange, on every change of any order book.
 
