@@ -52,17 +52,12 @@ pub async fn get_snapshot(
         ),
     };
 
-    let mut snapshot = reqwest::get(url)
+    let snapshot = reqwest::get(url)
         .await
         .expect(format!("Failed to get snapshot for {}", exchange.as_str_name()).as_str())
         .json::<Snapshot>()
         .await
         .expect(format!("Failed to parse json for {}", exchange.as_str_name()).as_str());
-
-    if exchange == ExchangeType::Bitstamp {
-        snapshot.bids = snapshot.bids[0..1000 as usize].to_vec();
-        snapshot.asks = snapshot.asks[0..1000 as usize].to_vec();
-    }
 
     Ok((exchange, snapshot))
 }

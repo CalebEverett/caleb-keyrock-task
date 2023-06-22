@@ -108,7 +108,7 @@ pub async fn get_stream(
             ExchangeType::Binance => {
                 let ws_url_binance = url::Url::parse("wss://stream.binance.us:9443")
                     .expect("bad binance url")
-                    .join(&format!("ws/{}@depth", symbol))
+                    .join(&format!("ws/{}@depth@100ms", symbol))
                     .unwrap();
 
                 let (ws_stream_binance, _) = connect_async(&ws_url_binance)
