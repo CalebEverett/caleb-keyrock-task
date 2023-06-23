@@ -56,7 +56,7 @@ where
     Ok([price, qty])
 }
 
-/// Converts an array of pairs of string to a vec of pairs of numbs of type T.
+/// Converts an array of pairs of strings to a vec of pairs of nums of type T.
 fn str_vec_to_num_vec<T>(str_vec: &Value) -> Result<Vec<[T; 2]>, anyhow::Error>
 where
     T: std::str::FromStr,

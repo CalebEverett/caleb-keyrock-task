@@ -141,10 +141,10 @@ impl OrderbookAggregator for OrderbookSummary {
                             return Err(Status::internal("Error sending summary"));
                         }
                     },
-                () = tx.closed() => {
-                    tracing::info!("Client closed stream");
-                    return Ok(());
-                }
+                    () = tx.closed() => {
+                        tracing::info!("Client closed stream");
+                        return Ok(());
+                    }
                 }
             }
         });
