@@ -200,7 +200,6 @@ impl Orderbook {
                 [price, quantity],
             )?
         }
-
         Ok(())
     }
 

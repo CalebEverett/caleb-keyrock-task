@@ -73,7 +73,7 @@ where
 }
 
 /// Deserializes updates from binance.
-pub fn get_updates_binance<'a>(value: &Value) -> Result<Update, anyhow::Error> {
+pub fn get_updates_binance(value: &Value) -> Result<Update, anyhow::Error> {
     let last_update_id = value["E"]
         .as_u64()
         .context("Failed to get binance last_update_id")?;
