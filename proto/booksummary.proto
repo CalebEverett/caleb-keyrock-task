@@ -26,9 +26,10 @@ message SummaryRequest {
 message Symbols { repeated string symbols = 1; }
 
 message Summary {
-  double spread = 1;
-  repeated Level bids = 2;
-  repeated Level asks = 3;
+  string symbol = 1;
+  double spread = 2;
+  repeated Level bids = 3;
+  repeated Level asks = 4;
 }
 
 message Level {
