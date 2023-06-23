@@ -1,6 +1,7 @@
 use crate::booksummary::{ExchangeType, Level, Summary};
-use crate::snapshot::{get_snapshots, Snapshot};
-use crate::update::Updates;
+use crate::update::{get_snapshot, Update};
+use anyhow::{Context, Result};
+use futures::future::try_join_all;
 
 use std::{
     collections::HashMap,
@@ -58,7 +59,7 @@ impl Orderbook {
         let min_price = min_price.mul(10u32.pow(decimals) as f64) as Price;
         let max_price = max_price.mul(10u32.pow(decimals) as f64) as Price;
         tracing::info!(
-            "Resetting orderbook for {} with levels {} and price range {} - {}",
+            "Resetting orderbook for {} with {} level(s) and price from {} to {}",
             symbol,
             levels,
             min_price,
@@ -83,11 +84,6 @@ impl Orderbook {
         self.power_quantity = 8;
     }
 
-    /// Gets the index for a given price.
-    fn get_idx(&self, price: Price) -> Price {
-        price.sub(self.min_price)
-    }
-
     /// Gets storage representation of price from its display price.
     fn get_price(&self, price: f64) -> Price {
         (price.mul(10u32.pow(self.decimals) as f64)) as Price
@@ -100,14 +96,12 @@ impl Orderbook {
 
     /// Retrieves a price point from storage.
     fn get_price_point(&self, price: Price) -> &PricePoint {
-        let idx = self.get_idx(price) as usize;
-        &self.price_points[idx]
+        &self.price_points[price.sub(self.min_price) as usize]
     }
 
     /// Retrieves a mutable price point from storage.
     fn get_price_point_mut(&mut self, price: Price) -> &mut PricePoint {
-        let idx = self.get_idx(price) as usize;
-        &mut self.price_points[idx]
+        &mut self.price_points[price.sub(self.min_price) as usize]
     }
 
     /// Adds, modifies or removes a bid from the order book.
@@ -115,10 +109,10 @@ impl Orderbook {
         &mut self,
         exchange: ExchangeType,
         level: [f64; 2],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let mut level_price = self.get_price(level[0]);
         if level_price > self.max_price || level_price < self.min_price {
-            return Err("Price is out of range".into());
+            return Ok(());
         }
 
         let level_quantity = self.get_quantity(level[1]);
@@ -153,10 +147,10 @@ impl Orderbook {
         &mut self,
         exchange: ExchangeType,
         level: [f64; 2],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
         let mut level_price = self.get_price(level[0]);
         if level_price > self.max_price || level_price < self.min_price {
-            return Err("Price is out of range".into());
+            return Ok(());
         }
 
         let level_quantity = self.get_quantity(level[1]);
@@ -187,41 +181,64 @@ impl Orderbook {
     }
 
     /// Processes updates to the orderbook from an exchange.
-    pub fn update(&mut self, updates: Updates) {
-        updates.bids.into_iter().for_each(|b| {
-            let price = b[0];
-            let quantity = b[1];
-            let _ = self.add_bid(updates.exchange.clone(), [price, quantity]);
-        });
-        updates.asks.into_iter().for_each(|a| {
-            let price = a[0];
-            let quantity = a[1];
-            let _ = self.add_ask(updates.exchange.clone(), [price, quantity]);
-        });
+    /// TODO: Try to parallelize this - the number of collisions is likely to be low.
+    pub async fn update(&mut self, updates: Update) -> Result<(), anyhow::Error> {
+        for bid in updates.bids.into_iter() {
+            let price = bid[0];
+            let quantity = bid[1];
+            self.add_bid(
+                updates.exchange.context("exchange is none")?,
+                [price, quantity],
+            )?
+        }
+
+        for ask in updates.asks.into_iter() {
+            let price = ask[0];
+            let quantity = ask[1];
+            self.add_ask(
+                updates.exchange.context("exchange is none")?,
+                [price, quantity],
+            )?
+        }
+
+        Ok(())
     }
 
     /// Processes an orderbook snapshot from an exchange into the orderbook.
     /// TODO: Try to parallelize this - the number of collisions is likely to be low.
-    fn add_snapshot(&mut self, exchange: ExchangeType, snapshot: Snapshot) {
-        snapshot.bids.into_iter().for_each(|b| {
-            let price = b[0];
-            let quantity = b[1];
-            let _ = self.add_bid(exchange, [price, quantity]);
-        });
-        snapshot.asks.into_iter().for_each(|a| {
-            let price = a[0];
-            let quantity = a[1];
-            let _ = self.add_ask(exchange, [price, quantity]);
-        });
+    fn add_snapshot(&mut self, snapshot: Update) -> Result<(), anyhow::Error> {
+        for bid in snapshot.bids.into_iter() {
+            let price = bid[0];
+            let quantity = bid[1];
+            self.add_bid(
+                snapshot.exchange.context("exchange is none")?,
+                [price, quantity],
+            )?
+        }
+        for ask in snapshot.asks.into_iter() {
+            let price = ask[0];
+            let quantity = ask[1];
+            self.add_ask(
+                snapshot.exchange.context("exchange is none")?,
+                [price, quantity],
+            )?
+        }
+        Ok(())
     }
 
     /// Adds snapshots from all exchanges for a given symbol.
     pub async fn add_snapshots(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let snapshots = get_snapshots(&self.symbol).await?;
+        // let snapshots = get_snapshots(&self.symbol).await?;
+        let snapshots: Vec<Update> = try_join_all(
+            ExchangeType::iter()
+                .map(|exchange| get_snapshot(exchange, &self.symbol))
+                .collect::<Vec<_>>(),
+        )
+        .await?;
 
-        snapshots.into_iter().for_each(|(exchange, snapshot)| {
-            self.add_snapshot(exchange, snapshot);
-        });
+        for snapshot in snapshots.into_iter() {
+            self.add_snapshot(snapshot)?;
+        }
         Ok(())
     }
 
@@ -290,6 +307,7 @@ impl Orderbook {
         let summary_bids = self.get_summary_bids();
 
         Summary {
+            symbol: self.symbol.clone(),
             spread: summary_asks[0].price - summary_bids[0].price,
             bids: summary_bids,
             asks: summary_asks,
@@ -317,7 +335,8 @@ mod tests {
         let mut ob = Orderbook::default();
         ob.reset(symbol, 10, 25_000.0, 30_000.0, 2);
         print_memory_usage();
-        assert!(false)
+        // change assertion to false to see memory usage
+        assert!(true)
     }
 
     #[test]
