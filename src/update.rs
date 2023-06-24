@@ -92,7 +92,7 @@ pub fn get_updates_binance(value: &Value) -> Result<Update, anyhow::Error> {
 /// Deserializes updates from bitstamp.
 pub fn get_updates_bitstamp(
     value: &Map<String, serde_json::Value>,
-) -> Result<Update, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Update, anyhow::Error> {
     let last_update_id = value["microtimestamp"]
         .as_str()
         .context("Failed to get bitstamp last_update_id")?

@@ -34,15 +34,16 @@ impl Default for PricePoint {
 /// Orderbook structure.
 #[derive(Debug, Default)]
 pub struct Orderbook {
+    pub symbol: String,
     pub ask_min: Price,
     pub bid_max: Price,
-    pub symbol: String,
     pub price_points: Vec<PricePoint>,
     pub min_price: Price,
     pub max_price: Price,
     levels: u32,
     decimals: u32,
     power_quantity: u32,
+    last_update_ids: Vec<u64>,
 }
 
 impl Orderbook {
@@ -82,6 +83,7 @@ impl Orderbook {
         self.levels = levels;
         self.decimals = decimals;
         self.power_quantity = 8;
+        self.last_update_ids = vec![0; ExchangeType::iter().len()];
     }
 
     /// Gets storage representation of price from its display price.
@@ -182,43 +184,27 @@ impl Orderbook {
 
     /// Processes updates to the orderbook from an exchange.
     /// TODO: Try to parallelize this - the number of collisions is likely to be low.
-    pub async fn update(&mut self, updates: Update) -> Result<(), anyhow::Error> {
-        for bid in updates.bids.into_iter() {
+    pub async fn update(&mut self, update: Update) -> Result<(), anyhow::Error> {
+        let idx = update.exchange.context("Update exchange is None")? as usize;
+        if update.last_update_id > self.last_update_ids[idx as usize] {
+            self.last_update_ids[idx] = update.last_update_id;
+        } else {
+            return Ok(());
+        }
+        for bid in update.bids.into_iter() {
             let price = bid[0];
             let quantity = bid[1];
             self.add_bid(
-                updates.exchange.context("exchange is none")?,
+                update.exchange.context("exchange is none")?,
                 [price, quantity],
             )?
         }
 
-        for ask in updates.asks.into_iter() {
+        for ask in update.asks.into_iter() {
             let price = ask[0];
             let quantity = ask[1];
             self.add_ask(
-                updates.exchange.context("exchange is none")?,
-                [price, quantity],
-            )?
-        }
-        Ok(())
-    }
-
-    /// Processes an orderbook snapshot from an exchange into the orderbook.
-    /// TODO: Try to parallelize this - the number of collisions is likely to be low.
-    fn add_snapshot(&mut self, snapshot: Update) -> Result<(), anyhow::Error> {
-        for bid in snapshot.bids.into_iter() {
-            let price = bid[0];
-            let quantity = bid[1];
-            self.add_bid(
-                snapshot.exchange.context("exchange is none")?,
-                [price, quantity],
-            )?
-        }
-        for ask in snapshot.asks.into_iter() {
-            let price = ask[0];
-            let quantity = ask[1];
-            self.add_ask(
-                snapshot.exchange.context("exchange is none")?,
+                update.exchange.context("exchange is none")?,
                 [price, quantity],
             )?
         }
@@ -236,7 +222,7 @@ impl Orderbook {
         .await?;
 
         for snapshot in snapshots.into_iter() {
-            self.add_snapshot(snapshot)?;
+            self.update(snapshot).await?
         }
         Ok(())
     }
@@ -308,6 +294,7 @@ impl Orderbook {
         Summary {
             symbol: self.symbol.clone(),
             spread: summary_asks[0].price - summary_bids[0].price,
+            timestamp: 0,
             bids: summary_bids,
             asks: summary_asks,
         }

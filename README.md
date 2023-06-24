@@ -44,7 +44,6 @@ The symbol is the currency pair to be included in the orderbook. Levels is the n
 ### Further Enahncements
 
 1. More tests, including one for order book and summary creation from downloaded snapshots.
-1. Check last updated from websocket diff stream against last updated from snapshots.
 1. Documentation.
 1. Parallelize update of bids and asks
 1. Explore parellelizing updates from exchange websocket diff streams

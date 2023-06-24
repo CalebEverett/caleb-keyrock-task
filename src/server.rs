@@ -113,6 +113,7 @@ impl OrderbookAggregator for OrderbookSummary {
         let ob_clone = self.orderbook.clone();
         tokio::spawn(async move {
             let mut ob = ob_clone.lock().await;
+            let mut summary = ob.get_summary();
             loop {
                 select! {
                     Some((key, msg)) = map.next() => {
@@ -136,9 +137,14 @@ impl OrderbookAggregator for OrderbookSummary {
                                 }
                             }
                         };
-                        if let Err(err) = tx.send(Ok(ob.get_summary())) {
-                            tracing::error!("Error sending summary: {:?}", err);
-                            return Err(Status::internal("Error sending summary"));
+                        let mut new_summary = ob.get_summary();
+                        if new_summary != summary {
+                            summary = new_summary.clone();
+                            new_summary.timestamp = chrono::Utc::now().timestamp_millis() as u64;
+                            if let Err(err) = tx.send(Ok(new_summary)) {
+                                tracing::error!("Error sending summary: {:?}", err);
+                                return Err(Status::internal("Error sending summary"));
+                            }
                         }
                     },
                     () = tx.closed() => {

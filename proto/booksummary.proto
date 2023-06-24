@@ -28,8 +28,9 @@ message Symbols { repeated string symbols = 1; }
 message Summary {
   string symbol = 1;
   double spread = 2;
-  repeated Level bids = 3;
-  repeated Level asks = 4;
+  uint64 timestamp = 3;
+  repeated Level bids = 4;
+  repeated Level asks = 5;
 }
 
 message Level {
