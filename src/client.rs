@@ -33,7 +33,7 @@ struct SummaryOptions {
 }
 
 /// Gets a list of symbols present on all exchanges.
-async fn get_symbols() -> Result<(), Box<dyn std::error::Error>> {
+async fn get_symbols() -> Result<(), anyhow::Error> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
     let request = tonic::Request::new(Empty {});
@@ -45,7 +45,7 @@ async fn get_symbols() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Gets a summary for a given symbol from the most recently available snapshots from the exchanges.
-async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
+async fn get_summary(opts: SummaryOptions) -> Result<(), anyhow::Error> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
 
     let request = tonic::Request::new(SummaryRequest {
@@ -62,7 +62,7 @@ async fn get_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Err
 }
 
 /// Streams a summary of the aggregatge orderbook for a given symbol, updated for changes from all exchanges.
-async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::Error>> {
+async fn watch_summary(opts: SummaryOptions) -> Result<(), anyhow::Error> {
     let mut client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
     let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
@@ -87,7 +87,7 @@ async fn watch_summary(opts: SummaryOptions) -> Result<(), Box<dyn std::error::E
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), anyhow::Error> {
     let opts = Options::parse();
 
     use Command::*;

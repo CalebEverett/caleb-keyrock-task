@@ -212,7 +212,7 @@ impl Orderbook {
     }
 
     /// Adds snapshots from all exchanges for a given symbol.
-    pub async fn add_snapshots(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn add_snapshots(&mut self) -> Result<(), anyhow::Error> {
         // let snapshots = get_snapshots(&self.symbol).await?;
         let snapshots: Vec<Update> = try_join_all(
             ExchangeType::iter()
