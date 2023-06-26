@@ -6,7 +6,7 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_tungstenite::tungstenite::Result;
 use tonic::{transport::Server, Status};
 
-use ckt_lib::{
+use orderbook_agg::{
     booksummary::{
         orderbook_aggregator_server::{OrderbookAggregator, OrderbookAggregatorServer},
         Empty, ExchangeType, Summary, SummaryRequest, Symbols,

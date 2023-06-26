@@ -1,0 +1,17 @@
+[package]
+name = "terminal-app"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = {workspace = true }
+crossterm = "0.26.1"
+log = "0.4.19"
+orderbook-agg = {path = "../orderbook-agg" }
+tokio = {workspace = true }
+tonic = {workspace = true }
+tui = { version = "0.19.0", features = ["crossterm"] }
+tui-logger = "0.9.2"
+tokio-stream = "0.1.14"
