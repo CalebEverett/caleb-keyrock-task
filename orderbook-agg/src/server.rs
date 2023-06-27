@@ -1,6 +1,6 @@
 use dotenv::dotenv;
-use futures::{lock::Mutex, Stream};
-use std::{pin::Pin, sync::Arc};
+use futures::Stream;
+use std::pin::Pin;
 use tokio::{select, sync::mpsc};
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tokio_tungstenite::tungstenite::Result;
@@ -18,15 +18,11 @@ use orderbook_agg::{
 };
 
 #[derive(Debug)]
-pub struct OrderbookSummary {
-    orderbook: Arc<Mutex<Orderbook>>,
-}
+pub struct OrderbookSummary {}
 
 impl Default for OrderbookSummary {
     fn default() -> Self {
-        Self {
-            orderbook: Arc::new(Mutex::new(Orderbook::default())),
-        }
+        Self {}
     }
 }
 
@@ -57,17 +53,22 @@ impl OrderbookAggregator for OrderbookSummary {
         let SummaryRequest {
             symbol,
             levels,
-            min_price,
-            max_price,
+            price_range,
             decimals,
         } = request.into_inner();
 
         validate_symbol(&symbol).await?;
-        let mut ob = self.orderbook.lock().await;
-        ob.reset(symbol.clone(), levels, min_price, max_price, decimals);
-        ob.add_snapshots()
-            .await
-            .map_err(|_| Status::internal("Failed to add snapshots"))?;
+        let snapshots = Orderbook::get_snapshots(&symbol).await.map_err(|err| {
+            tracing::error!("Failed to get snapshots: {:?}", err);
+            Status::internal("Failed to get snapshots")
+        })?;
+
+        let ob = Orderbook::new(symbol.clone(), levels, price_range, decimals, snapshots).map_err(
+            |err| {
+                tracing::error!("Failed to create orderbook: {:?}", err);
+                Status::internal("Failed to create orderbook")
+            },
+        )?;
 
         let summary = ob.get_summary();
         let response = tonic::Response::new(summary);
@@ -79,40 +80,33 @@ impl OrderbookAggregator for OrderbookSummary {
         &self,
         request: tonic::Request<SummaryRequest>,
     ) -> Result<tonic::Response<Self::WatchSummaryStream>, Status> {
-        let addr = &request.remote_addr().unwrap();
         let SummaryRequest {
             symbol,
             levels,
-            min_price,
-            max_price,
+            price_range,
             decimals,
         } = request.into_inner();
 
-        tracing::info!(
-            "Received request to stream summary with {} level() for symbol {} from {}",
-            levels,
-            symbol,
-            addr
-        );
-        let (tx, rx) = mpsc::unbounded_channel();
-
         validate_symbol(&symbol).await?;
-        {
-            let ob_clone = self.orderbook.clone();
-            let mut ob = ob_clone.lock().await;
-            ob.reset(symbol.clone(), levels, min_price, max_price, decimals);
-            ob.add_snapshots()
-                .await
-                .map_err(|_| Status::internal("Failed to add snapshots"))?;
-        }
+        let snapshots = Orderbook::get_snapshots(&symbol).await.map_err(|err| {
+            tracing::error!("Failed to get snapshots: {:?}", err);
+            Status::internal("Failed to get snapshots")
+        })?;
 
+        let mut ob = Orderbook::new(symbol.clone(), levels, price_range, decimals, snapshots)
+            .map_err(|err| {
+                tracing::error!("Failed to create orderbook: {:?}", err);
+                Status::internal("Failed to create orderbook")
+            })?;
+
+        let (tx, rx) = mpsc::unbounded_channel();
         let mut map = get_stream(symbol)
             .await
             .map_err(|_| Status::internal("Could not get stream"))?;
         tracing::info!("Opened stream");
-        let ob_clone = self.orderbook.clone();
+        // let ob_clone = self.orderbook.clone();
         tokio::spawn(async move {
-            let mut ob = ob_clone.lock().await;
+            // let mut ob = ob_clone.lock().await;
             let mut summary = ob.get_summary();
             loop {
                 select! {
@@ -123,7 +117,7 @@ impl OrderbookAggregator for OrderbookSummary {
                             match key {
                                 ExchangeType::Binance => {
                                     if let Ok(updates) = get_updates_binance(&msg_value) {
-                                        ob.update(updates).await.map_err(|_| Status::internal("Failed to process binance update"))?;
+                                        ob.update(updates).map_err(|_| Status::internal("Failed to process binance update"))?;
                                     };
                                 }
                                 ExchangeType::Bitstamp => {
@@ -131,7 +125,7 @@ impl OrderbookAggregator for OrderbookSummary {
                                         if data.len() > 0 {
                                             let updates =
                                                 get_updates_bitstamp(data).map_err(|_| Status::internal("failed to get updates"))?;
-                                                ob.update(updates).await.map_err(|_| Status::internal("Failed to process bitstamp update"))?;
+                                                ob.update(updates).map_err(|_| Status::internal("Failed to process bitstamp update"))?;
                                         }
                                     };
                                 }
@@ -149,8 +143,11 @@ impl OrderbookAggregator for OrderbookSummary {
                     },
                     () = tx.closed() => {
                         tracing::info!("Client closed stream");
+                        for (_, exchange_stream) in map.iter_mut() {
+                            exchange_stream.close(None).await.map_err(|_| Status::internal("Failed to close stream"))?;
+                        }
                         return Ok(());
-                    }
+                    },
                 }
             }
         });

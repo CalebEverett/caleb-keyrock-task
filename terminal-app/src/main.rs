@@ -1,3 +1,5 @@
+use clap::Parser;
+use orderbook_agg::booksummary::SummaryRequest;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -6,6 +8,18 @@ use terminal_app::app::App;
 use terminal_app::io::handler::IoAsyncHandler;
 use terminal_app::io::IoEvent;
 use terminal_app::start_ui;
+
+#[derive(Debug, Parser)]
+struct SummaryOptions {
+    #[clap(long)]
+    symbol: String,
+    #[clap(long)]
+    levels: Option<u32>,
+    #[clap(long)]
+    price_range: Option<f64>,
+    #[clap(long)]
+    decimals: Option<u32>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,7 +41,15 @@ async fn main() -> Result<()> {
         }
     });
 
-    start_ui(&app_ui).await?;
+    let opts = SummaryOptions::parse();
+    let summary_request = SummaryRequest {
+        symbol: opts.symbol,
+        levels: opts.levels.unwrap_or(15),
+        price_range: opts.price_range.unwrap_or(5.),
+        decimals: opts.decimals.unwrap_or(2),
+    };
+
+    start_ui(&app_ui, summary_request).await?;
 
     Ok(())
 }

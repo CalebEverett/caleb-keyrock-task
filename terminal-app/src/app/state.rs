@@ -10,6 +10,9 @@ pub enum AppState {
         counter_sleep: u32,
         counter_tick: u64,
         summary: Summary,
+        datapoints_bid: Vec<(f64, f64)>,
+        datapoints_ask: Vec<(f64, f64)>,
+        datapoints_spread: Vec<(f64, f64)>,
     },
 }
 
@@ -19,12 +22,18 @@ impl AppState {
         let counter_sleep = 0;
         let counter_tick = 0;
         let summary = Summary::default();
+        let datapoints_bid = Vec::new();
+        let datapoints_ask = Vec::new();
+        let datapoints_spread = Vec::new();
 
         Ok(Self::Initialized {
             duration,
             counter_sleep,
             counter_tick,
             summary,
+            datapoints_bid,
+            datapoints_ask,
+            datapoints_spread,
         })
     }
 
@@ -68,6 +77,20 @@ impl AppState {
         }
     }
 
+    pub fn get_datapoints(&self) -> Option<[&Vec<(f64, f64)>; 3]> {
+        if let Self::Initialized {
+            datapoints_bid,
+            datapoints_ask,
+            datapoints_spread,
+            ..
+        } = self
+        {
+            Some([datapoints_bid, datapoints_ask, datapoints_spread])
+        } else {
+            None
+        }
+    }
+
     pub fn duration(&self) -> Option<&Duration> {
         if let Self::Initialized { duration, .. } = self {
             Some(duration)
@@ -93,7 +116,18 @@ impl AppState {
     }
 
     pub fn update_summary(&mut self, summary_new: Summary) {
-        if let Self::Initialized { summary, .. } = self {
+        if let Self::Initialized {
+            summary,
+            datapoints_bid,
+            datapoints_ask,
+            datapoints_spread,
+            ..
+        } = self
+        {
+            datapoints_bid.push((summary_new.timestamp as f64, summary_new.bids[0].price));
+            datapoints_ask.push((summary_new.timestamp as f64, summary_new.asks[0].price));
+            datapoints_spread.push((summary_new.timestamp as f64, summary_new.spread));
+
             *summary = summary_new;
         }
     }

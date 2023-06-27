@@ -25,9 +25,7 @@ struct SummaryOptions {
     #[clap(long)]
     levels: Option<u32>,
     #[clap(long)]
-    min_price: f64,
-    #[clap(long)]
-    max_price: f64,
+    price_range: f64,
     #[clap(long)]
     decimals: u32,
 }
@@ -52,8 +50,7 @@ async fn get_summary(
     let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
         levels: opts.levels.unwrap_or(10),
-        min_price: opts.min_price,
-        max_price: opts.max_price,
+        price_range: opts.price_range,
         decimals: opts.decimals,
     });
 
@@ -70,8 +67,7 @@ async fn watch_summary(
     let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
         levels: opts.levels.unwrap_or(10),
-        min_price: opts.min_price,
-        max_price: opts.max_price,
+        price_range: opts.price_range,
         decimals: opts.decimals,
     });
 

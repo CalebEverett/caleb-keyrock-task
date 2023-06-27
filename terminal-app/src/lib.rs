@@ -8,6 +8,7 @@ use inputs::events::Events;
 use inputs::InputEvent;
 use io::IoEvent;
 use orderbook_agg::booksummary::orderbook_aggregator_client::OrderbookAggregatorClient;
+use orderbook_agg::booksummary::SummaryRequest;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
 
@@ -17,7 +18,10 @@ pub mod app;
 pub mod inputs;
 pub mod io;
 
-pub async fn start_ui(app: &Arc<tokio::sync::Mutex<App>>) -> Result<()> {
+pub async fn start_ui(
+    app: &Arc<tokio::sync::Mutex<App>>,
+    summary_request: SummaryRequest,
+) -> Result<()> {
     // Configure Crossterm backend for tui
     let stdout = stdout();
     crossterm::terminal::enable_raw_mode()?;
@@ -30,7 +34,9 @@ pub async fn start_ui(app: &Arc<tokio::sync::Mutex<App>>) -> Result<()> {
     let tick_rate = Duration::from_millis(100);
     let client: OrderbookAggregatorClient<tonic::transport::Channel> =
         OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
-    let mut events = Events::new(tick_rate, client);
+    let decimals = summary_request.decimals;
+    let symbol = summary_request.symbol.clone();
+    let mut events = Events::new(tick_rate, client, summary_request);
 
     // Trigger state change from Init to Initialized
     {
@@ -43,7 +49,7 @@ pub async fn start_ui(app: &Arc<tokio::sync::Mutex<App>>) -> Result<()> {
         let mut app = app.lock().await;
 
         // Render
-        terminal.draw(|rect| ui::draw(rect, &app))?;
+        terminal.draw(|rect| ui::draw(rect, &app, &symbol, decimals))?;
 
         // Handle inputs
         let result = match events.next().await {

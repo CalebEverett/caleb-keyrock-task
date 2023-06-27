@@ -47,18 +47,29 @@ pub struct Orderbook {
 }
 
 impl Orderbook {
-    /// Initializes an already creaated orderbook to facilitate Arc<Mutex<Orderbook>>
-    /// on the server.
-    pub fn reset(
-        &mut self,
+    pub fn new(
         symbol: String,
         levels: u32,
-        min_price: f64,
-        max_price: f64,
+        price_range: f64,
         decimals: Price,
-    ) {
-        let min_price = min_price.mul(10u32.pow(decimals) as f64) as Price;
-        let max_price = max_price.mul(10u32.pow(decimals) as f64) as Price;
+        snapshots: Vec<Update>,
+    ) -> Result<Self, anyhow::Error> {
+        let max_bid = snapshots
+            .iter()
+            .map(|snapshot| {
+                snapshot
+                    .bids
+                    .iter()
+                    .map(|bid| bid[0])
+                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                    .unwrap()
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap();
+        let min_price =
+            (max_bid * (1. - (price_range / 100.))).mul(10u32.pow(decimals) as f64) as Price;
+        let max_price =
+            (max_bid * (1. + (price_range / 100.))).mul(10u32.pow(decimals) as f64) as Price;
         tracing::info!(
             "Resetting orderbook for {} with {} level(s) and price from {} to {}",
             symbol,
@@ -66,24 +77,31 @@ impl Orderbook {
             min_price,
             max_price
         );
-        let mut pps: Vec<PricePoint> = Vec::with_capacity((max_price - min_price) as usize + 2);
+        let mut price_points: Vec<PricePoint> =
+            Vec::with_capacity((max_price - min_price) as usize + 2);
 
         let mut idx = 0;
         while idx <= (max_price - min_price) as usize {
-            pps.push(PricePoint::default());
+            price_points.push(PricePoint::default());
             idx += 1;
         }
 
-        self.symbol = symbol;
-        self.ask_min = u32::MAX;
-        self.bid_max = 0;
-        self.price_points = pps;
-        self.min_price = min_price;
-        self.max_price = max_price;
-        self.levels = levels;
-        self.decimals = decimals;
-        self.power_quantity = 8;
-        self.last_update_ids = vec![0; ExchangeType::iter().len()];
+        let mut ob = Self {
+            symbol,
+            ask_min: u32::MAX,
+            bid_max: 0,
+            price_points,
+            min_price,
+            max_price,
+            levels,
+            decimals,
+            power_quantity: 8,
+            last_update_ids: vec![0; ExchangeType::iter().len()],
+        };
+        for snapshot in snapshots.into_iter() {
+            ob.update(snapshot)?;
+        }
+        Ok(ob)
     }
 
     /// Gets storage representation of price from its display price.
@@ -184,11 +202,16 @@ impl Orderbook {
 
     /// Processes updates to the orderbook from an exchange.
     /// TODO: Try to parallelize this - the number of collisions is likely to be low.
-    pub async fn update(&mut self, update: Update) -> Result<(), anyhow::Error> {
+    pub fn update(&mut self, update: Update) -> Result<(), anyhow::Error> {
         let idx = update.exchange.context("Update exchange is None")? as usize;
         if update.last_update_id > self.last_update_ids[idx as usize] {
             self.last_update_ids[idx] = update.last_update_id;
         } else {
+            tracing::info!(
+                "Skipping update from {} with id {}",
+                update.exchange.unwrap().as_str_name(),
+                update.last_update_id
+            );
             return Ok(());
         }
         for bid in update.bids.into_iter() {
@@ -212,19 +235,13 @@ impl Orderbook {
     }
 
     /// Adds snapshots from all exchanges for a given symbol.
-    pub async fn add_snapshots(&mut self) -> Result<(), anyhow::Error> {
-        // let snapshots = get_snapshots(&self.symbol).await?;
-        let snapshots: Vec<Update> = try_join_all(
+    pub async fn get_snapshots(symbol: &String) -> Result<Vec<Update>, anyhow::Error> {
+        try_join_all(
             ExchangeType::iter()
-                .map(|exchange| get_snapshot(exchange, &self.symbol))
+                .map(|exchange| get_snapshot(exchange, symbol))
                 .collect::<Vec<_>>(),
         )
-        .await?;
-
-        for snapshot in snapshots.into_iter() {
-            self.update(snapshot).await?
-        }
-        Ok(())
+        .await
     }
 
     /// Collect bids for the summary.
@@ -252,6 +269,9 @@ impl Orderbook {
                 break;
             }
             bid_max -= 1;
+        }
+        if summary_bids.len() > self.levels as usize {
+            summary_bids.truncate(self.levels as usize);
         }
         summary_bids
     }
@@ -281,6 +301,9 @@ impl Orderbook {
                 break;
             }
             ask_min += 1;
+        }
+        if summary_asks.len() > self.levels as usize {
+            summary_asks.truncate(self.levels as usize);
         }
         summary_asks
     }
@@ -318,18 +341,35 @@ mod tests {
     #[test]
     fn it_creates_an_orderbook() {
         let symbol = "BTCUSD".to_string();
-        let mut ob = Orderbook::default();
-        ob.reset(symbol, 10, 25_000.0, 30_000.0, 2);
+        let snapshots = vec![Update {
+            exchange: Some(ExchangeType::Binance),
+            last_update_id: 1234,
+            bids: vec![[1.0, 1.0]],
+            asks: vec![[1.0, 1.0]],
+        }];
+        let ob = Orderbook::new(symbol, 10, 10.0, 2, snapshots).unwrap();
         print_memory_usage();
+        assert_eq!(ob.price_points.len(), 21);
+        let level_price = ob.get_price(1.0);
+        let level_quantity = ob.get_quantity(1.0);
+        let pp = ob.get_price_point(level_price);
+        assert_eq!(
+            *pp.bids.get(&ExchangeType::Binance).unwrap(),
+            level_quantity
+        );
         // change assertion to false to see memory usage
-        assert!(true)
     }
 
     #[test]
     fn adds_a_bid() {
         let symbol = "BTCUSD".to_string();
-        let mut ob = Orderbook::default();
-        ob.reset(symbol, 10, 24_000.0, 28_000.0, 2);
+        let snapshots = vec![Update {
+            exchange: Some(ExchangeType::Binance),
+            last_update_id: 1234,
+            bids: vec![[25_900.0, 1.0]],
+            asks: vec![[1.0, 1.0]],
+        }];
+        let mut ob = Orderbook::new(symbol, 10, 10.0, 2, snapshots).unwrap();
 
         let price = 26_000.0;
         let quantity = 1.0;
@@ -350,27 +390,27 @@ mod tests {
     #[test]
     fn removes_a_bid() {
         let symbol = "BTCUSD".to_string();
-        let mut ob = Orderbook::default();
-        ob.reset(symbol, 10, 24_000.0, 24_100.0, 2);
+        let price2 = 26_100.0;
+        let price1 = 26_000.0;
 
-        let prices = [24_051.0, 24_050.0];
-        let quantity = 1.0;
+        let snapshots = vec![Update {
+            exchange: Some(ExchangeType::Binance),
+            last_update_id: 1234,
+            bids: vec![[price2, 1.0], [price1, 1.0]],
+            asks: vec![[1.0, 1.0]],
+        }];
+        let mut ob = Orderbook::new(symbol, 10, 10.0, 2, snapshots).unwrap();
+
         let level_quantity = ob.get_quantity(1.0);
-        prices.into_iter().for_each(|price| {
-            ob.add_bid(ExchangeType::Binance, [price, quantity])
-                .unwrap();
-        });
-
-        let pp = ob.get_price_point_mut(ob.get_price(prices[0]));
+        let pp = ob.get_price_point_mut(ob.get_price(price2));
 
         assert_eq!(
             *pp.bids.get(&ExchangeType::Binance).unwrap(),
             level_quantity
         );
-        assert_eq!(ob.bid_max, ob.get_price(prices[0]));
+        assert_eq!(ob.bid_max, ob.get_price(price2));
 
-        let price = 24_051.0;
-        ob.add_bid(ExchangeType::Binance, [price, 0.]).unwrap();
-        assert_eq!(ob.bid_max, ob.get_price(prices[1]));
+        ob.add_bid(ExchangeType::Binance, [price2, 0.]).unwrap();
+        assert_eq!(ob.bid_max, ob.get_price(price1));
     }
 }

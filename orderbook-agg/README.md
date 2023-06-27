@@ -1,4 +1,4 @@
-# caleb-keyrock-task
+# orderbook-agg
 
 ## The Challenge
 
@@ -29,17 +29,35 @@ An orderbook with 5,000,000 price points and 500 levels in the summary uses appr
 
 ### Running the Solution
 
-A command line interface is provided to run the solution. It takes the following arguments:
+#### Server
+
+To start the server, run:
+`cargo run --bin server`
+
+#### Client
+
+A command line interface is provided to run the client. It takes the following arguments:
 
 ```
 --symbol
 --levels
---min_price
---max_price
+--price-range
 --decimals
 ```
 
-The symbol is the currency pair to be included in the orderbook. Levels is the number of levels to be included in the summary. The min_price and max_price are the minimum and maximum prices to be included in the orderbook and should be set around the current market price. Decimals is the number of decimal places to include in the prices. The order book is managed without decimals - asset quantities are represented as u64 up to 8 decicmal places and prices are represented as u32. The decimals is used to convert the prices to u32 for storage and to convert back to f64 for display.
+The symbol is the currency pair to be included in the orderbook. Levels is the number of levels to be included in the summary. The price range is a float that is a percentage around the starting best ask price the order book will be maintained (i.e. if the current best ask price is 100 and you specify 5.0, the max orderbook price will be 105 and the minimum will be 95). Decimals is the number of decimal places to include in the prices. The order book is managed without decimals - asset quantities are represented as u64 up to 8 decicmal places and prices are represented as u32. The decimals is used to convert the prices to u32 for storage and to convert back to f64 for display.
+
+The following command would print a json summary of the orderbook for the symbol BTCUSD with 10 levels, a price range of 3.0 and 2 decimals:
+
+```
+cargo run --bin client -- watch-summary --symbol BTCUSD --levels 10 --price-range 3 --decimals 2
+```
+
+You can get valid symbols by running:
+
+```
+cargo run --bin client -- get-symbols
+```
 
 ### Further Enahncements
 

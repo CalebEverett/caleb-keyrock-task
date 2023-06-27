@@ -57,7 +57,6 @@ impl IoAsyncHandler {
         Ok(())
     }
 
-    /// Just take a little break
     async fn do_update(&mut self, summary: Summary) -> Result<()> {
         info!("😴 Updating summary");
         let mut app = self.app.lock().await;
