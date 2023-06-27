@@ -38,7 +38,7 @@ impl IoAsyncHandler {
     async fn do_initialize(&mut self) -> Result<()> {
         info!("🚀 Initialize the application");
         let mut app = self.app.lock().await;
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // tokio::time::sleep(Duration::from_secs(1)).await;
         app.initialized().await?; // we could update the app state
         info!("👍 Application initialized");
 
