@@ -18,8 +18,7 @@ enum ExchangeType {
 message SummaryRequest {
   string symbol = 1;
   uint32 levels = 2;
-  double min_price = 3;
-  double max_price = 4;
+  double price_range = 3;
   uint32 decimals = 5;
 }
 

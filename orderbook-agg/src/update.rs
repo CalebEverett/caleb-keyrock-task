@@ -103,7 +103,7 @@ pub fn get_updates_bitstamp(
     let asks = str_vec_to_num_vec::<f64>(&value["asks"])?;
 
     Ok(Update {
-        exchange: Some(ExchangeType::Binance),
+        exchange: Some(ExchangeType::Bitstamp),
         last_update_id,
         bids,
         asks,
