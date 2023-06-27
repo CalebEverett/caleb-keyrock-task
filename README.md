@@ -9,6 +9,8 @@ This repo consists of two crates:
 
 A gRPC server that aggregates orderbook data from multiple exchanges and a client library for interacting with the server.
 
-## termnal-app
+## terminal-app
 
 A simple terminal app that allows you to display a streaming summary of an aggregate orderbook and spread history.
+
+![teminal app screen](./terminal-app/screen.png)
