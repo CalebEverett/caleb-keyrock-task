@@ -146,6 +146,7 @@ fn get_date_str_format(timestamp: f64) -> String {
 }
 
 fn draw_chart<'a>(datapoints: [&'a Vec<(f64, f64)>; 3], decimals: u32) -> Chart<'a> {
+    let max_min_decimals = 8;
     let x_min = datapoints[0]
         .into_iter()
         .min_by(|x, y| (x.0 as u32).cmp(&(y.0 as u32)))
@@ -158,12 +159,18 @@ fn draw_chart<'a>(datapoints: [&'a Vec<(f64, f64)>; 3], decimals: u32) -> Chart<
         .0;
     let y_min = datapoints[2]
         .into_iter()
-        .min_by(|x, y| (x.1 as u32).cmp(&(y.1 as u32)))
+        .min_by(|x, y| {
+            ((x.1 * 10u32.pow(max_min_decimals) as f64) as i32)
+                .cmp(&((y.1 * 10u32.pow(max_min_decimals) as f64) as i32))
+        })
         .unwrap()
         .1;
     let y_max = datapoints[2]
         .into_iter()
-        .max_by(|x, y| (x.1 as u32).cmp(&(y.1 as u32)))
+        .max_by(|x, y| {
+            ((x.1 * 10u32.pow(max_min_decimals) as f64) as i32)
+                .cmp(&((y.1 * 10u32.pow(max_min_decimals) as f64) as i32))
+        })
         .unwrap()
         .1;
 
@@ -194,7 +201,14 @@ fn draw_chart<'a>(datapoints: [&'a Vec<(f64, f64)>; 3], decimals: u32) -> Chart<
             .data(datapoints[2]),
     ];
     Chart::new(datasets)
-        .block(Block::default().borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(Span::styled(
+                    "Spread History",
+                    Style::default().fg(Color::White),
+                ))
+                .borders(Borders::ALL),
+        )
         .x_axis(
             Axis::default()
                 .title(Span::styled("UTC", Style::default().fg(Color::White)))
@@ -210,7 +224,6 @@ fn draw_chart<'a>(datapoints: [&'a Vec<(f64, f64)>; 3], decimals: u32) -> Chart<
         )
         .y_axis(
             Axis::default()
-                .title(Span::styled("Spread", Style::default().fg(Color::White)))
                 .style(Style::default().fg(Color::White))
                 .bounds(y_bounds)
                 .labels(
