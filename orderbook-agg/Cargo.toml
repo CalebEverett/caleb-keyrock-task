@@ -29,6 +29,7 @@ serde = { version = "1.0.164", features = ["derive"] }
 serde_json = "1.0.97"
 serde-aux = "4.2.0"
 strum = { version = "0.24.1", features = ["derive"] }
+time = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = "0.1.14"
 tokio-tungstenite = { version = "0.19.0", features = ["native-tls"] }
