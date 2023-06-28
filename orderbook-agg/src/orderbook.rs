@@ -1,6 +1,6 @@
 use crate::booksummary::{ExchangeType, Level, Summary};
 use crate::update::{get_snapshot, Update};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use futures::future::try_join_all;
 
 use std::{
@@ -53,7 +53,7 @@ impl Orderbook {
         price_range: f64,
         decimals: Price,
         snapshots: Vec<Update>,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<Self> {
         let max_bid = snapshots
             .iter()
             .map(|snapshot| {
@@ -71,7 +71,7 @@ impl Orderbook {
         let max_price =
             (max_bid * (1. + (price_range / 100.))).mul(10u32.pow(decimals) as f64) as Price;
         tracing::info!(
-            "Resetting orderbook for {} with {} level(s) and price from {} to {}",
+            "Creating new orderbook for {} with {} level(s) and price from {} to {}",
             symbol,
             levels,
             min_price,
@@ -125,11 +125,7 @@ impl Orderbook {
     }
 
     /// Adds, modifies or removes a bid from the order book.
-    pub fn add_bid(
-        &mut self,
-        exchange: ExchangeType,
-        level: [f64; 2],
-    ) -> Result<(), anyhow::Error> {
+    pub fn add_bid(&mut self, exchange: ExchangeType, level: [f64; 2]) -> Result<()> {
         let mut level_price = self.get_price(level[0]);
         if level_price > self.max_price || level_price < self.min_price {
             return Ok(());
@@ -163,11 +159,7 @@ impl Orderbook {
     }
 
     /// Adds, modifies or removes an ask from the order book.
-    pub fn add_ask(
-        &mut self,
-        exchange: ExchangeType,
-        level: [f64; 2],
-    ) -> Result<(), anyhow::Error> {
+    pub fn add_ask(&mut self, exchange: ExchangeType, level: [f64; 2]) -> Result<()> {
         let mut level_price = self.get_price(level[0]);
         if level_price > self.max_price || level_price < self.min_price {
             return Ok(());
@@ -202,7 +194,7 @@ impl Orderbook {
 
     /// Processes updates to the orderbook from an exchange.
     /// TODO: Try to parallelize this - the number of collisions is likely to be low.
-    pub fn update(&mut self, update: Update) -> Result<(), anyhow::Error> {
+    pub fn update(&mut self, update: Update) -> Result<()> {
         let idx = update.exchange.context("Update exchange is None")? as usize;
         if update.last_update_id > self.last_update_ids[idx as usize] {
             self.last_update_ids[idx] = update.last_update_id;
@@ -235,7 +227,7 @@ impl Orderbook {
     }
 
     /// Adds snapshots from all exchanges for a given symbol.
-    pub async fn get_snapshots(symbol: &String) -> Result<Vec<Update>, anyhow::Error> {
+    pub async fn get_snapshots(symbol: &String) -> Result<Vec<Update>> {
         try_join_all(
             ExchangeType::iter()
                 .map(|exchange| get_snapshot(exchange, symbol))
@@ -270,9 +262,9 @@ impl Orderbook {
             }
             bid_max -= 1;
         }
-        if summary_bids.len() > self.levels as usize {
-            summary_bids.truncate(self.levels as usize);
-        }
+
+        summary_bids.truncate(self.levels as usize);
+
         summary_bids
     }
 
@@ -302,25 +294,34 @@ impl Orderbook {
             }
             ask_min += 1;
         }
-        if summary_asks.len() > self.levels as usize {
-            summary_asks.truncate(self.levels as usize);
-        }
+
+        summary_asks.truncate(self.levels as usize);
+
         summary_asks
     }
 
     /// Create the summary.
     /// TODO: Try to parallelize this - the orderbook is only being read.
-    pub fn get_summary(&self) -> Summary {
+    pub fn get_summary(&self) -> Result<Summary> {
         let summary_asks = self.get_summary_asks();
         let summary_bids = self.get_summary_bids();
 
-        Summary {
+        if summary_asks.is_empty() || summary_bids.is_empty() {
+            tracing::error!(
+                "Summary spread cannot be calculated with {} bids and {} asks",
+                summary_bids.len(),
+                summary_asks.len()
+            );
+            bail!("Summary spread cannot be calculated".to_string());
+        }
+
+        Ok(Summary {
             symbol: self.symbol.clone(),
             spread: summary_asks[0].price - summary_bids[0].price,
             timestamp: 0,
             bids: summary_bids,
             asks: summary_asks,
-        }
+        })
     }
 }
 

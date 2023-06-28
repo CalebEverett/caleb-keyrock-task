@@ -38,7 +38,7 @@ where
 }
 
 /// Converts a pair of strings to a pair of numbers of type T.
-fn str_pair_to_num<T>(pair: &Value) -> Result<[T; 2], anyhow::Error>
+fn str_pair_to_num<T>(pair: &Value) -> Result<[T; 2]>
 where
     T: std::str::FromStr,
     <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
@@ -57,7 +57,7 @@ where
 }
 
 /// Converts an array of pairs of strings to a vec of pairs of nums of type T.
-fn str_vec_to_num_vec<T>(str_vec: &Value) -> Result<Vec<[T; 2]>, anyhow::Error>
+fn str_vec_to_num_vec<T>(str_vec: &Value) -> Result<Vec<[T; 2]>>
 where
     T: std::str::FromStr,
     <T as std::str::FromStr>::Err: std::error::Error + Send + Sync + 'static,
@@ -73,7 +73,7 @@ where
 }
 
 /// Deserializes updates from binance.
-pub fn get_updates_binance(value: &Value) -> Result<Update, anyhow::Error> {
+pub fn get_updates_binance(value: &Value) -> Result<Update> {
     let last_update_id = value["E"]
         .as_u64()
         .context("Failed to get binance last_update_id")?;
@@ -90,9 +90,7 @@ pub fn get_updates_binance(value: &Value) -> Result<Update, anyhow::Error> {
 }
 
 /// Deserializes updates from bitstamp.
-pub fn get_updates_bitstamp(
-    value: &Map<String, serde_json::Value>,
-) -> Result<Update, anyhow::Error> {
+pub fn get_updates_bitstamp(value: &Map<String, serde_json::Value>) -> Result<Update> {
     let last_update_id = value["microtimestamp"]
         .as_str()
         .context("Failed to get bitstamp last_update_id")?
@@ -113,7 +111,7 @@ pub fn get_updates_bitstamp(
 /// Gets a websocket stream for each exchange and returns a map of them.
 pub async fn get_stream(
     symbol: String,
-) -> Result<StreamMap<ExchangeType, WebSocketStream<MaybeTlsStream<TcpStream>>>, anyhow::Error> {
+) -> Result<StreamMap<ExchangeType, WebSocketStream<MaybeTlsStream<TcpStream>>>> {
     let mut map = StreamMap::new();
     let symbol = symbol.to_lowercase();
 
@@ -156,10 +154,7 @@ pub async fn get_stream(
 }
 
 /// Gets a orderbook snapshot with up to 1000 levels for a given exchange and symbol.
-pub async fn get_snapshot(
-    exchange: ExchangeType,
-    symbol: &String,
-) -> Result<Update, anyhow::Error> {
+pub async fn get_snapshot(exchange: ExchangeType, symbol: &String) -> Result<Update> {
     let url = match exchange {
         ExchangeType::Binance => {
             tracing::info!("Getting snapshot from binance");

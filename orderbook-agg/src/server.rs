@@ -1,9 +1,9 @@
+use anyhow::Result;
 use dotenv::dotenv;
 use futures::Stream;
 use std::pin::Pin;
 use tokio::{select, sync::mpsc};
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
-use tokio_tungstenite::tungstenite::Result;
 use tonic::{transport::Server, Status};
 
 use orderbook_agg::{
@@ -70,7 +70,9 @@ impl OrderbookAggregator for OrderbookSummary {
             },
         )?;
 
-        let summary = ob.get_summary();
+        let summary = ob
+            .get_summary()
+            .map_err(|_| Status::internal("Summary spread cannot be calculated"))?;
         let response = tonic::Response::new(summary);
         Ok(response)
     }
@@ -107,7 +109,9 @@ impl OrderbookAggregator for OrderbookSummary {
         // let ob_clone = self.orderbook.clone();
         tokio::spawn(async move {
             // let mut ob = ob_clone.lock().await;
-            let mut summary = ob.get_summary();
+            let mut summary = ob
+                .get_summary()
+                .map_err(|_| Status::internal("Summary spread cannot be calculated"))?;
             loop {
                 select! {
                     Some((key, msg)) = map.next() => {
@@ -131,7 +135,7 @@ impl OrderbookAggregator for OrderbookSummary {
                                 }
                             }
                         };
-                        let mut new_summary = ob.get_summary();
+                        let mut new_summary = ob.get_summary().map_err(|_| Status::internal("Summary spread cannot be calculated"))?;
                         if new_summary != summary {
                             summary = new_summary.clone();
                             new_summary.timestamp = chrono::Utc::now().timestamp_millis() as u64;
@@ -160,7 +164,7 @@ impl OrderbookAggregator for OrderbookSummary {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+async fn main() -> Result<()> {
     let subscriber = tracing_subscriber::fmt()
         .with_line_number(true)
         .with_max_level(tracing::Level::INFO)

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::time::Duration;
 
 use orderbook_agg::booksummary::Summary;
@@ -17,7 +18,7 @@ pub enum AppState {
 }
 
 impl AppState {
-    pub async fn initialized() -> Result<Self, anyhow::Error> {
+    pub async fn initialized() -> Result<Self> {
         let duration = Duration::from_secs(1);
         let counter_sleep = 0;
         let counter_tick = 0;

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use clap::Parser;
 use tokio_stream::StreamExt;
 
@@ -33,7 +34,7 @@ struct SummaryOptions {
 /// Gets a list of symbols present on all exchanges.
 async fn get_symbols(
     mut client: OrderbookAggregatorClient<tonic::transport::Channel>,
-) -> Result<(), anyhow::Error> {
+) -> Result<()> {
     let request = tonic::Request::new(Empty {});
     let symbols = client.get_symbols(request).await?.into_inner();
     for symbol in symbols.symbols {
@@ -46,7 +47,7 @@ async fn get_symbols(
 async fn get_summary(
     mut client: OrderbookAggregatorClient<tonic::transport::Channel>,
     opts: SummaryOptions,
-) -> Result<(), anyhow::Error> {
+) -> Result<()> {
     let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
         levels: opts.levels.unwrap_or(10),
@@ -63,7 +64,7 @@ async fn get_summary(
 async fn watch_summary(
     mut client: OrderbookAggregatorClient<tonic::transport::Channel>,
     opts: SummaryOptions,
-) -> Result<(), anyhow::Error> {
+) -> Result<()> {
     let request = tonic::Request::new(SummaryRequest {
         symbol: opts.symbol,
         levels: opts.levels.unwrap_or(10),
@@ -86,7 +87,7 @@ async fn watch_summary(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+async fn main() -> Result<()> {
     let client = OrderbookAggregatorClient::connect("http://127.0.0.1:9001").await?;
     let opts = Options::parse();
 

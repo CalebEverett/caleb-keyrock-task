@@ -194,7 +194,7 @@ fn draw_chart<'a>(datapoints: [&'a Vec<(f64, f64)>; 3], decimals: u32) -> Chart<
         //     .style(Style::default().fg(Color::LightRed))
         //     .data(datapoints[1]),
         Dataset::<'a>::default()
-            .name("ask")
+            .name("spread")
             .marker(symbols::Marker::Dot)
             .graph_type(GraphType::Scatter)
             .style(Style::default().fg(Color::LightYellow))
