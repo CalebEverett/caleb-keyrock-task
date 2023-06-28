@@ -62,6 +62,7 @@ cargo run --bin client -- get-symbols
 ### Further Enahncements
 
 1. More tests, including one for order book and summary creation from downloaded snapshots.
+1. Clean up error handling - implement From trait for errors to Status.
 1. Documentation.
 1. Parallelize update of bids and asks
 1. Explore parellelizing updates from exchange websocket diff streams
