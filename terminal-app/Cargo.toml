@@ -11,7 +11,7 @@ chrono = {workspace = true }
 clap = {workspace = true }
 crossterm = "0.26.1"
 log = "0.4.19"
-orderbook-agg = {path = "../orderbook-agg" }
+orderbook-agg-old = {path = "../orderbook-agg-old" }
 time = { workspace = true }
 tokio = {workspace = true }
 tonic = {workspace = true }

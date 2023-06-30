@@ -6,7 +6,7 @@ use tokio::{select, sync::mpsc};
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tonic::{transport::Server, Status};
 
-use orderbook_agg::{
+use orderbook_agg_old::{
     booksummary::{
         orderbook_aggregator_server::{OrderbookAggregator, OrderbookAggregatorServer},
         Empty, ExchangeType, Summary, SummaryRequest, Symbols,
@@ -45,7 +45,7 @@ impl OrderbookAggregator for OrderbookSummary {
     }
 
     /// Gets an orderbook summary for a given symbol from the most recently available
-    /// snapshots from teh exchanges.
+    /// snapshots from the exchanges.
     async fn get_summary(
         &self,
         request: tonic::Request<SummaryRequest>,

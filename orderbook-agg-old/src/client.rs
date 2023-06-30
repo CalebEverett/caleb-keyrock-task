@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use tokio_stream::StreamExt;
 
-use orderbook_agg::booksummary::{
+use orderbook_agg_old::booksummary::{
     orderbook_aggregator_client::OrderbookAggregatorClient, Empty, SummaryRequest,
 };
 

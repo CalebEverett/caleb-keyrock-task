@@ -1,91 +1,130 @@
-use crate::booksummary::{ExchangeType, Symbols};
-use anyhow::{Context, Result};
-use futures::future::try_join_all;
-use std::collections::HashSet;
-use strum::IntoEnumIterator;
-use tonic::Status;
+use anyhow::{ensure, Context, Result};
+use rust_decimal::{prelude::FromPrimitive, Decimal};
+use serde::{Deserialize, Serialize};
 
-/// Gets available symbols for a given exchange.
-pub async fn get_symbols(exchange: ExchangeType) -> Result<HashSet<String>, anyhow::Error> {
-    let symbols = match exchange {
-        ExchangeType::Binance => reqwest::get("https://api.binance.us/api/v3/exchangeInfo")
-            .await?
-            .json::<serde_json::Value>()
-            .await?["symbols"]
-            .as_array()
-            .context("Failed to get binance symbols")?
-            .iter()
-            .map(|symbol| {
-                symbol["symbol"]
-                    .as_str()
-                    .context("Failed to parse binance symbol")
-            })
-            .filter_map(|s| s.ok())
-            .map(|s| s.to_string())
-            .collect::<HashSet<String>>(),
+use crate::booksummary::ExchangeType;
 
-        ExchangeType::Bitstamp => reqwest::get("https://www.bitstamp.net/api/v2/ticker/")
-            .await?
-            .json::<serde_json::Value>()
-            .await?
-            .as_array()
-            .context("Failed to get bitstamp symbols")?
-            .iter()
-            .map(|symbol| {
-                symbol["pair"]
-                    .as_str()
-                    .context("Failed to parse bitstamp symbol")
-            })
-            .filter_map(|s| s.ok())
-            .map(|s| s.replace("/", ""))
-            .collect::<HashSet<String>>(),
-    };
-    Ok(symbols)
+pub type StoragePrice = u32;
+pub type StorageQuantity = u64;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SymbolInfo {
+    pub display_price_min: Decimal,
+    pub display_price_max: Decimal,
 }
 
-/// Gets symbols available on all exchanges.
-pub async fn get_symbols_all() -> Result<Symbols, anyhow::Error> {
-    let symbols_vec = try_join_all(
-        ExchangeType::iter()
-            .map(|exchange| get_symbols(exchange))
-            .collect::<Vec<_>>(),
-    )
-    .await?;
-
-    let exchange_names: Vec<&str> = ExchangeType::iter().map(|e| e.as_str_name()).collect();
-    let symbols_intersection: HashSet<String> =
-        symbols_vec
-            .into_iter()
-            .enumerate()
-            .fold(HashSet::new(), |acc, (i, set)| {
-                tracing::info!(exchange = &exchange_names[i], symbols_count = set.len());
-                if acc.is_empty() {
-                    set
-                } else {
-                    acc.intersection(&set).map(|s| s.to_string()).collect()
-                }
-            });
-
-    let mut symbols: Vec<String> = symbols_intersection.into_iter().collect();
-
-    symbols.sort();
-
-    tracing::info!(
-        exchanges = format!("{}", exchange_names.join(", ")),
-        symbols_count = symbols.len()
-    );
-
-    Ok(Symbols { symbols })
-}
-
-/// Validates a symbol is available on all exchanges.
-pub async fn validate_symbol(symbol: &String) -> Result<(), Status> {
-    let symbols = get_symbols_all()
-        .await
-        .map_err(|_| Status::internal("Failed to get symols"))?;
-    if !symbols.symbols.iter().any(|s| s == symbol) {
-        tracing::error!("Symbol {} not found on one or more exchanges", symbol);
-        return Err(Status::not_found("Symbol not found"));
+impl Default for SymbolInfo {
+    fn default() -> Self {
+        Self {
+            display_price_min: Decimal::new(0, 0),
+            display_price_max: Decimal::MAX,
+        }
     }
-    Ok(())
+}
+
+// we have a symbol to make sure we are using the same symbol across all exchanges
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum Symbol {
+    BTCUSDT { info: SymbolInfo },
+    BTCUSD { info: SymbolInfo },
+    ETHBTC { info: SymbolInfo },
+}
+
+impl Symbol {
+    pub fn get_info(&self) -> SymbolInfo {
+        match self {
+            Symbol::BTCUSDT { info } => *info,
+            Symbol::BTCUSD { info } => *info,
+            Symbol::ETHBTC { info } => *info,
+        }
+    }
+    pub fn set_info(&self, info: SymbolInfo) -> Self {
+        match self {
+            Symbol::BTCUSDT { .. } => Symbol::BTCUSDT { info },
+            Symbol::BTCUSD { .. } => Symbol::BTCUSD { info },
+            Symbol::ETHBTC { .. } => Symbol::ETHBTC { info },
+        }
+    }
+}
+
+impl Default for Symbol {
+    fn default() -> Self {
+        Symbol::BTCUSDT {
+            info: SymbolInfo::default(),
+        }
+    }
+}
+
+impl std::fmt::Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Symbol::BTCUSDT { .. } => write!(f, "BTCUSDT"),
+            Symbol::BTCUSD { .. } => write!(f, "BTCUSD"),
+            Symbol::ETHBTC { .. } => write!(f, "ETHBTC"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExchangeSymbolInfo {
+    pub exchange: ExchangeType,
+    pub symbol: Symbol,
+    pub scale_price: u32,
+    pub scale_quantity: u32,
+}
+
+// TODO: check to see if this is slow
+fn display_to_storage(mut display: Decimal, scale_add: u32) -> Result<u32> {
+    ensure!(display > Decimal::new(0, 0), "price must be greater than 0");
+    let scale = display.scale();
+    display.set_scale(scale + scale_add)?;
+    display.normalize_assign();
+    let mantissa = display.mantissa();
+    let bytes = mantissa.to_le_bytes();
+    let mut new_bytes: [u8; 4] = [0; 4];
+    for (i, b) in bytes.into_iter().enumerate() {
+        if i < 4 {
+            new_bytes[i] = b;
+        } else {
+            if b != 0 {
+                ensure!(b == 0, "price is too large");
+            }
+        }
+    }
+    let storage = u32::from_le_bytes(new_bytes);
+    Ok(storage)
+}
+
+impl ExchangeSymbolInfo {
+    pub fn get_storage_price(&self, display_price: Decimal) -> Result<u32> {
+        display_to_storage(display_price, self.scale_price)
+    }
+
+    pub fn get_storage_quantity(&self, display_quantity: Decimal) -> Result<u32> {
+        display_to_storage(display_quantity, self.scale_quantity)
+    }
+
+    pub fn get_storage_price_min(&self) -> Result<u32> {
+        let info = self.symbol.get_info();
+        self.get_storage_price(info.display_price_min)
+    }
+
+    pub fn get_storage_price_max(&self) -> Result<u32> {
+        let info = self.symbol.get_info();
+        self.get_storage_price(info.display_price_max)
+    }
+
+    pub fn get_display_price(&self, storage_price: StoragePrice) -> Decimal {
+        let mut decimal = Decimal::from_u32(storage_price).unwrap();
+        let scale = decimal.scale();
+        decimal.set_scale(scale - self.scale_price).unwrap();
+        decimal
+    }
+
+    pub fn get_display_quantity(&self, storage_quantity: StorageQuantity) -> Decimal {
+        let mut decimal = Decimal::from_u64(storage_quantity).unwrap();
+        let scale = decimal.scale();
+        decimal.set_scale(scale - self.scale_quantity).unwrap();
+        decimal
+    }
 }
