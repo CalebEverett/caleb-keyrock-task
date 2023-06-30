@@ -1,0 +1,169 @@
+use anyhow::{Context, Result};
+use rust_decimal::Decimal;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+use std::str::FromStr;
+use url::Url;
+
+use crate::exchanges::{Symbol, UpdateState};
+
+fn from_str<'de, D>(deserializer: D) -> Result<Vec<[Decimal; 2]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v: Vec<[&str; 2]> = Deserialize::deserialize(deserializer)?;
+    Ok(v.into_iter()
+        .map(|s| (s[0].parse::<Decimal>(), s[1].parse::<Decimal>()))
+        .filter_map(|p| Some([p.0.ok()?, p.1.ok()?]))
+        .collect::<Vec<[Decimal; 2]>>())
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub last_update_id: u64,
+    #[serde(deserialize_with = "from_str")]
+    pub bids: Vec<[Decimal; 2]>,
+    #[serde(deserialize_with = "from_str")]
+    pub asks: Vec<[Decimal; 2]>,
+}
+
+impl UpdateState for Snapshot {
+    fn last_update_id(&self) -> u64 {
+        self.last_update_id
+    }
+
+    fn bids_mut(self) -> Vec<[Decimal; 2]> {
+        self.bids
+    }
+
+    fn asks_mut(self) -> Vec<[Decimal; 2]> {
+        self.asks
+    }
+}
+
+impl Snapshot {
+    pub(crate) async fn fetch(url: Url) -> Result<Self> {
+        let snapshot = reqwest::get(url)
+            .await
+            .context("Failed to get snapshot")?
+            .json::<Self>()
+            .await
+            .context("Failed to deserialize snapshot")?;
+        Ok(snapshot)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Update {
+    pub last_update_id: u64,
+    #[serde(deserialize_with = "from_str")]
+    pub bids: Vec<[Decimal; 2]>,
+    #[serde(deserialize_with = "from_str")]
+    pub asks: Vec<[Decimal; 2]>,
+}
+
+impl UpdateState for Update {
+    fn last_update_id(&self) -> u64 {
+        self.last_update_id
+    }
+
+    fn bids_mut(self) -> Vec<[Decimal; 2]> {
+        self.bids
+    }
+
+    fn asks_mut(self) -> Vec<[Decimal; 2]> {
+        self.asks
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct BestPrice {
+    pub symbol: String,
+    pub bid_price: Decimal,
+    pub bid_qty: Decimal,
+    pub ask_price: Decimal,
+    pub ask_qty: Decimal,
+}
+
+impl BestPrice {
+    pub(super) async fn fetch(url: Url) -> Result<Self> {
+        let price = reqwest::get(url)
+            .await
+            .context("Failed to get price")?
+            .json::<Self>()
+            .await
+            .context("Failed to deserialize binance best price")?;
+        Ok(price)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct SymbolData {
+    pub symbol: Symbol,
+    pub base_asset_precision: u32,
+    pub quote_asset_precision: u32,
+    pub filters: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ExchangeInfo {
+    pub symbols: Vec<SymbolData>,
+}
+
+impl ExchangeInfo {
+    pub(super) async fn fetch(url: Url) -> Result<Self> {
+        let exchange_info = reqwest::get(url)
+            .await
+            .context("Failed to get exchange info")?
+            .json::<Self>()
+            .await
+            .context("Failed to deserialize exchange info to json")?;
+        Ok(exchange_info)
+    }
+
+    fn symbol(&self) -> Result<&SymbolData> {
+        let symbol = self.symbols.first().context("failed to get symbol")?;
+
+        Ok(symbol)
+    }
+
+    pub(super) fn scale_price(&self) -> Result<u32> {
+        let tick_sizes = self
+            .symbol()?
+            .filters
+            .iter()
+            .filter_map(|filter| {
+                let filter_obj = filter.as_object()?;
+                if let Some(filter_type) = filter["filterType"].as_str() {
+                    if filter_type == "PRICE_FILTER" {
+                        filter_obj["tickSize"].as_str()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<&str>>();
+
+        let tick_size_str = tick_sizes.first().context("Failed to get tick size")?;
+
+        let scale_price = Decimal::from_str(tick_size_str)
+            .context("Failed to parse tick size")?
+            .normalize()
+            .scale();
+
+        Ok(scale_price)
+    }
+
+    pub(super) fn scale_quantity(&self) -> Result<u32> {
+        let scale_quantity = self.symbol()?.base_asset_precision.min(8);
+
+        Ok(scale_quantity)
+    }
+}

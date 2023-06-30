@@ -1,5 +1,7 @@
 use anyhow::Result;
-use orderbook_agg::symbol::{Symbol, SymbolInfo};
+use orderbook_agg::exchanges::{
+    binance::BinanceOrderbook, ExchangeOrderbookMethods, Symbol, SymbolInfo,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -12,6 +14,10 @@ async fn main() -> Result<()> {
     let symbol = Symbol::BTCUSDT {
         info: SymbolInfo::default(),
     };
+
+    let symbol = BinanceOrderbook::fetch_symbol_info(symbol, 10).await?;
+
+    tracing::info!("symbol: {:?}", symbol);
 
     // let symbols = vec![
     //     Symbol {
