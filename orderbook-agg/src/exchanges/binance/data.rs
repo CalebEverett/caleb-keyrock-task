@@ -103,7 +103,7 @@ impl BestPrice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SymbolData {
-    pub symbol: Symbol,
+    pub symbol: String,
     pub base_asset_precision: u32,
     pub quote_asset_precision: u32,
     pub filters: Vec<Value>,

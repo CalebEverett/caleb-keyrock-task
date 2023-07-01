@@ -16,8 +16,14 @@ async fn main() -> Result<()> {
     };
 
     let symbol = BinanceOrderbook::fetch_symbol_info(symbol, 10).await?;
-
-    tracing::info!("symbol: {:?}", symbol);
+    let exchange_symbol_info = BinanceOrderbook::fetch_exchange_symbol_info(symbol).await?;
+    // let orderbook = BinanceOrderbook::new(exchange_symbol_info)?;
+    let display_price_max = exchange_symbol_info.display_price_max();
+    tracing::info!("order: {:?}, {}", exchange_symbol_info, display_price_max);
+    let storage_price_max = exchange_symbol_info.storage_price_max();
+    let storage_price_min = exchange_symbol_info.storage_price_min();
+    tracing::info!("storage_price_max: {}", storage_price_max);
+    tracing::info!("storage_price_min: {}", storage_price_min);
 
     // let symbols = vec![
     //     Symbol {

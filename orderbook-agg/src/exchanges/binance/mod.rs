@@ -1,12 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use rust_decimal::Decimal;
-use std::{
-    ops::{Add, Div, Mul},
-    sync::{Arc, Mutex},
-};
+use rust_decimal::{prelude::FromPrimitive, Decimal};
+use std::ops::{Add, Div, Mul};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tracing_subscriber::field::display;
 
 use super::{
     ExchangeOrderbookMethods, ExchangeOrderbookProps, ExchangeSymbolInfo, Orderbook, Symbol,
@@ -41,12 +39,21 @@ impl ExchangeOrderbookProps for BinanceOrderbook {
 #[async_trait]
 impl ExchangeOrderbookMethods<Snapshot> for BinanceOrderbook {
     async fn fetch_symbol_info(symbol: Symbol, price_range: i64) -> Result<Symbol> {
-        let price_range_decimal = Decimal::new(price_range, 2);
+        let price_range_decimal = Decimal::from_i64(price_range)
+            .context("failed to create decimal")?
+            .div(Decimal::new(100, 0))
+            .add(Decimal::new(1, 0));
         let current_bid_price = Self::fetch_current_bid_price(&symbol).await?;
         let display_price_max = current_bid_price.mul(price_range_decimal);
-        let display_price_min = current_bid_price.div(price_range_decimal.add(Decimal::new(1, 0)));
+        let display_price_min = current_bid_price.div(price_range_decimal);
+        tracing::info!(
+            "current_bid_price: {}, display_price_min: {}, display_price_max: {}",
+            current_bid_price,
+            display_price_min,
+            display_price_max
+        );
 
-        symbol.set_info(SymbolInfo {
+        let symbol = symbol.set_info(SymbolInfo {
             display_price_min,
             display_price_max,
         });
@@ -59,9 +66,28 @@ impl ExchangeOrderbookMethods<Snapshot> for BinanceOrderbook {
             .append_pair("symbol", &symbol.to_string())
             .finish();
 
+        let symbol_info = symbol.info();
         let binance_exchange_info = ExchangeInfo::fetch(url).await?;
         let scale_price = binance_exchange_info.scale_price()?;
         let scale_quantity = binance_exchange_info.scale_quantity()?;
+        tracing::info!("symbol: {:?}", symbol,);
+        tracing::info!(
+            "scale_price: {}, scale_quantity: {}",
+            scale_price,
+            scale_quantity
+        );
+        let display_price_min = symbol_info.display_price_min.round_dp(scale_price);
+        let display_price_max = symbol_info.display_price_max.round_dp(scale_price);
+        tracing::info!(
+            "display_price_min: {}, display_price_max: {}",
+            display_price_min,
+            display_price_max
+        );
+
+        let symbol = symbol.set_info(SymbolInfo {
+            display_price_min,
+            display_price_max,
+        });
 
         let exchange_symbol_info = ExchangeSymbolInfo {
             exchange: ExchangeType::Binance,

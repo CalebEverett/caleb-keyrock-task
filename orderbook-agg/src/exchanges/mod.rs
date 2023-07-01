@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
@@ -49,12 +49,20 @@ impl Orderbook {
         self.tx_summary().lock().unwrap().subscribe()
     }
 
-    fn storage_price_min(&self) -> Result<u32> {
+    pub fn storage_price_min(&self) -> StoragePrice {
         self.exchange_symbol_info.storage_price_min()
     }
 
-    fn storage_price_max(&self) -> Result<u32> {
+    pub fn storage_price_max(&self) -> StoragePrice {
         self.exchange_symbol_info.storage_price_max()
+    }
+
+    pub fn display_price_min(&self) -> Decimal {
+        self.exchange_symbol_info.display_price_min()
+    }
+
+    pub fn display_price_max(&self) -> Decimal {
+        self.exchange_symbol_info.display_price_max()
     }
 
     fn storage_price(&self, display_price: Decimal) -> Result<u32> {
@@ -74,13 +82,13 @@ impl Orderbook {
             .get_display_quantity(storage_quantity)
     }
     fn idx(&self, storage_price: StoragePrice) -> usize {
-        let storage_price_min = self.storage_price_min().unwrap();
+        let storage_price_min = self.storage_price_min();
         (storage_price - storage_price_min) as usize
     }
     /// Adds, modifies or removes a bid from the order book.
     pub fn add_bid(&mut self, level: [Decimal; 2]) -> Result<()> {
         let mut storage_price = self.exchange_symbol_info.storage_price(level[0])?;
-        if storage_price > self.storage_price_max()? || storage_price < self.storage_price_min()? {
+        if storage_price > self.storage_price_max() || storage_price < self.storage_price_min() {
             return Ok(());
         }
 
@@ -112,7 +120,7 @@ impl Orderbook {
     /// Adds, modifies or removes a bid from the order book.
     pub fn add_ask(&mut self, level: [Decimal; 2]) -> Result<()> {
         let mut storage_price = self.exchange_symbol_info.storage_price(level[0])?;
-        if storage_price > self.storage_price_max()? || storage_price < self.storage_price_min()? {
+        if storage_price > self.storage_price_max() || storage_price < self.storage_price_min() {
             return Ok(());
         }
 
@@ -170,8 +178,8 @@ pub trait ExchangeOrderbookMethods<S: UpdateState>: ExchangeOrderbookProps {
     ) -> Result<Result<WebSocketStream<MaybeTlsStream<TcpStream>>>>;
     fn update_orderbook<U: UpdateState>(&self, update: U) -> Result<()>;
     fn create_orderbook(exchange_symbol_info: ExchangeSymbolInfo) -> Result<Orderbook> {
-        let storage_price_min = exchange_symbol_info.storage_price_min()?;
-        let storage_price_max = exchange_symbol_info.storage_price_max()?;
+        let storage_price_min = exchange_symbol_info.storage_price_min();
+        let storage_price_max = exchange_symbol_info.storage_price_max();
 
         let capacity = (storage_price_min - storage_price_max) as usize;
         let mut bids: Vec<StorageQuantity> = Vec::with_capacity(capacity + 1);
@@ -308,18 +316,26 @@ pub struct ExchangeSymbolInfo {
 }
 
 impl ExchangeSymbolInfo {
-    pub fn storage_price_min(&self) -> Result<u32> {
-        let info = self.symbol.info();
-        self.storage_price(info.display_price_min)
-    }
-
-    pub fn storage_price_max(&self) -> Result<u32> {
-        let info = self.symbol.info();
-        self.storage_price(info.display_price_max)
-    }
-
     pub fn storage_price(&self, display_price: Decimal) -> Result<u32> {
         display_to_storage_price(display_price, self.scale_price)
+    }
+
+    pub fn storage_price_min(&self) -> StoragePrice {
+        let info = self.symbol.info();
+        self.storage_price(info.display_price_min).unwrap()
+    }
+
+    pub fn storage_price_max(&self) -> StoragePrice {
+        let info = self.symbol.info();
+        self.storage_price(info.display_price_max).unwrap()
+    }
+
+    pub fn display_price_min(&self) -> Decimal {
+        self.symbol.info().display_price_max
+    }
+
+    pub fn display_price_max(&self) -> Decimal {
+        self.symbol.info().display_price_max
     }
 
     pub fn storage_quantity(&self, display_quantity: Decimal) -> Result<u64> {
@@ -328,15 +344,13 @@ impl ExchangeSymbolInfo {
 
     pub fn display_price(&self, storage_price: StoragePrice) -> Decimal {
         let mut decimal = Decimal::from_u32(storage_price).unwrap();
-        let scale = decimal.scale();
-        decimal.set_scale(scale - self.scale_price).unwrap();
+        decimal.set_scale(self.scale_price).unwrap();
         decimal
     }
 
     pub fn get_display_quantity(&self, storage_quantity: StorageQuantity) -> Decimal {
         let mut decimal = Decimal::from_u64(storage_quantity).unwrap();
-        let scale = decimal.scale();
-        decimal.set_scale(scale - self.scale_quantity).unwrap();
+        decimal.set_scale(self.scale_quantity).unwrap();
         decimal
     }
 }
@@ -381,10 +395,16 @@ mod tests {
             panic!("greater than u32 should have failed");
         };
 
-        if let Err(err) = exchange_symbol_info.storage_price(Decimal::new(0, 0)) {
-            assert_eq!(err.to_string(), "price must be greater than 0");
+        if let Err(err) = exchange_symbol_info.storage_price(Decimal::new(-1, 0)) {
+            assert_eq!(err.to_string(), "price sign must be positive");
         } else {
-            panic!("not greater than 0 should have failed");
+            panic!("negative should have failed");
+        };
+
+        if let Err(err) = exchange_symbol_info.storage_quantity(Decimal::new(-1, 0)) {
+            assert_eq!(err.to_string(), "quantity sign must be positive");
+        } else {
+            panic!("negative should have failed");
         };
     }
 }

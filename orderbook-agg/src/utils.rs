@@ -38,45 +38,32 @@ where
 }
 
 // TODO: check to see if this is slow
-pub fn display_to_storage_price(mut display: Decimal, scale_add: u32) -> Result<u32> {
-    ensure!(display > Decimal::new(0, 0), "price must be greater than 0");
-    let scale = display.scale();
-    display.set_scale(scale + scale_add)?;
-    display.normalize_assign();
-    let mantissa = display.mantissa();
-    let bytes = mantissa.to_le_bytes();
-    let mut new_bytes: [u8; 4] = [0; 4];
-    for (i, b) in bytes.into_iter().enumerate() {
-        if i < 4 {
-            new_bytes[i] = b;
-        } else {
-            if b != 0 {
-                ensure!(b == 0, "price is too large");
-            }
-        }
-    }
-    let storage = u32::from_le_bytes(new_bytes);
-    Ok(storage)
+pub fn display_to_storage_price(mut display_price: Decimal, scale_add: u32) -> Result<u32> {
+    ensure!(
+        display_price.is_sign_positive(),
+        "price sign must be positive"
+    );
+    display_price = display_price.trunc_with_scale(scale_add);
+    display_price.set_scale(0)?;
+
+    let unpacked = display_price.unpack();
+    ensure!(unpacked.mid == 0 && unpacked.hi == 0, "price is too large");
+
+    Ok(unpacked.lo)
 }
 
-pub fn display_to_storage_quantity(mut display: Decimal, scale_add: u32) -> Result<u64> {
-    ensure!(display > Decimal::new(0, 0), "price must be greater than 0");
-    let scale = display.scale();
-    display.set_scale(scale + scale_add)?;
-    display.normalize_assign();
+pub fn display_to_storage_quantity(mut display_quantity: Decimal, scale_add: u32) -> Result<u64> {
+    ensure!(
+        display_quantity.is_sign_positive(),
+        "quantity sign must be positive"
+    );
 
-    let mantissa = display.mantissa();
-    let bytes = mantissa.to_le_bytes();
-    let mut new_bytes: [u8; 8] = [0; 8];
-    for (i, b) in bytes.into_iter().enumerate() {
-        if i < 4 {
-            new_bytes[i] = b;
-        } else {
-            if b != 0 {
-                ensure!(b == 0, "price is too large");
-            }
-        }
-    }
-    let storage = u64::from_le_bytes(new_bytes);
+    display_quantity = display_quantity.trunc_with_scale(scale_add);
+    display_quantity.set_scale(0)?;
+
+    let unpacked = display_quantity.unpack();
+    ensure!(unpacked.hi == 0, "price is too large");
+
+    let storage = unpacked.lo as u64 + (unpacked.mid as u64) << 32;
     Ok(storage)
 }
