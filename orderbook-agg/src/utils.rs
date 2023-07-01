@@ -62,8 +62,11 @@ pub fn display_to_storage_quantity(mut display_quantity: Decimal, scale_add: u32
     display_quantity.set_scale(0)?;
 
     let unpacked = display_quantity.unpack();
-    ensure!(unpacked.hi == 0, "price is too large");
+    ensure!(unpacked.hi == 0, "quantity is too large");
 
-    let storage = unpacked.lo as u64 + (unpacked.mid as u64) << 32;
+    let mut storage = unpacked.lo as u64;
+    if unpacked.mid > 0 {
+        storage += (unpacked.mid as u64) << 32;
+    }
     Ok(storage)
 }

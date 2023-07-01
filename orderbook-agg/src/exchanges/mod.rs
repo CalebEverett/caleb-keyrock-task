@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, watch};
+use tokio_stream::StreamExt;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use url::Url;
 
@@ -18,34 +20,70 @@ pub type StoragePrice = u32;
 pub type StorageQuantity = u64;
 
 #[derive(Debug)]
-pub enum OrderbookMessage {
-    Update(String),
+pub enum OrderbookMessage<U: UpdateState + 'static> {
+    Update(U),
     Summary(String),
 }
-pub struct Orderbook {
+
+#[derive(Debug)]
+pub struct Orderbook<U: UpdateState + 'static> {
     pub exchange_symbol_info: ExchangeSymbolInfo,
     pub storage_ask_min: StoragePrice,
     pub storage_bid_max: StoragePrice,
-    pub bids: Arc<Mutex<Vec<StorageQuantity>>>,
+    // pub bids: Arc<Mutex<Vec<StorageQuantity>>>,
+    pub bids: Vec<StorageQuantity>,
     pub asks: Arc<Mutex<Vec<StorageQuantity>>>,
     pub last_update_id: u64,
-    pub tx_summary: Arc<Mutex<watch::Sender<OrderbookMessage>>>,
+    pub tx_summary: Arc<Mutex<watch::Sender<OrderbookMessage<U>>>>,
 }
 
-impl Orderbook {
+impl<U: UpdateState> Orderbook<U> {
+    fn new(exchange_symbol_info: ExchangeSymbolInfo) -> Orderbook<U> {
+        let storage_price_min = exchange_symbol_info.storage_price_min();
+        let storage_price_max = exchange_symbol_info.storage_price_max();
+
+        let capacity = (storage_price_max - storage_price_min) as usize + 1;
+        let mut bids: Vec<StorageQuantity> = Vec::with_capacity(capacity);
+        let mut asks: Vec<StorageQuantity> = Vec::with_capacity(capacity);
+
+        for _ in 0..capacity {
+            bids.push(0);
+            asks.push(0);
+        }
+
+        let (tx_summary, _) = watch::channel(OrderbookMessage::Summary("hello".to_string()));
+
+        let orderbook = Orderbook {
+            exchange_symbol_info,
+            storage_ask_min: u32::MAX,
+            storage_bid_max: u32::MIN,
+            // bids: Arc::new(Mutex::new(bids)),
+            bids,
+            asks: Arc::new(Mutex::new(asks)),
+            last_update_id: u64::MIN,
+            tx_summary: Arc::new(Mutex::new(tx_summary)),
+        };
+        orderbook
+    }
     fn symbol(&self) -> Symbol {
         self.exchange_symbol_info.symbol
     }
-    fn bids(&self) -> Arc<Mutex<Vec<StorageQuantity>>> {
-        self.bids.clone()
+    // fn bids(&self) -> Arc<Mutex<Vec<StorageQuantity>>> {
+    //     self.bids.clone()
+    // }
+    fn bids(&self) -> &Vec<StorageQuantity> {
+        &self.bids
+    }
+    fn bids_mut(&mut self) -> &mut Vec<StorageQuantity> {
+        &mut self.bids
     }
     fn asks(&self) -> Arc<Mutex<Vec<StorageQuantity>>> {
         self.asks.clone()
     }
-    fn tx_summary(&self) -> Arc<Mutex<watch::Sender<OrderbookMessage>>> {
+    fn tx_summary(&self) -> Arc<Mutex<watch::Sender<OrderbookMessage<U>>>> {
         self.tx_summary.clone()
     }
-    fn rx_summary(&self) -> watch::Receiver<OrderbookMessage> {
+    pub fn rx_summary(&self) -> watch::Receiver<OrderbookMessage<U>> {
         self.tx_summary().lock().unwrap().subscribe()
     }
 
@@ -92,12 +130,15 @@ impl Orderbook {
             return Ok(());
         }
 
-        let mut bids = self.bids.lock().unwrap();
-
         let storage_quantity = self.storage_quantity(level[1])?;
         let mut idx = self.idx(storage_price);
 
-        bids[idx] = storage_quantity;
+        // let mut bids = self.bids.lock().unwrap();
+
+        {
+            let bids = self.bids_mut();
+            bids[idx] = storage_quantity;
+        }
 
         if storage_quantity > 0 {
             if storage_price > self.storage_bid_max {
@@ -107,8 +148,8 @@ impl Orderbook {
             if storage_price == self.storage_bid_max && storage_quantity == 0 {
                 loop {
                     storage_price -= 1;
-                    idx = self.idx(storage_price);
-                    if bids[idx] > 0 {
+                    idx = self.idx(storage_price).clone();
+                    if &self.bids[idx] > &0 {
                         self.storage_bid_max = storage_price;
                         break;
                     }
@@ -147,13 +188,33 @@ impl Orderbook {
         }
         Ok(())
     }
+    /// Processes updates to the orderbook from an exchange.
+    /// TODO: Try to parallelize this - the number of collisions is likely to be low.
+    pub fn update(&mut self, update: U) -> Result<()> {
+        if update.last_update_id() > self.last_update_id {
+            self.last_update_id = update.last_update_id();
+        } else {
+            tracing::info!("Skipping update",);
+            return Ok(());
+        }
+
+        for bid in update.bids_mut().into_iter() {
+            self.add_bid(bid)?
+        }
+
+        // for ask in update.asks.into_iter() {
+        //     self.add_ask(update.exchange.context("exchange is none")?, ask)?
+        // }
+
+        Ok(())
+    }
 }
 
-pub trait ExchangeOrderbookProps {
+pub trait ExchangeOrderbookState<U: UpdateState> {
     const BASE_URL_HTTPS: &'static str;
     const BASE_URL_WSS: &'static str;
 
-    fn orderbook(&self) -> &Orderbook;
+    fn orderbook(&self) -> Arc<Mutex<Orderbook<U>>>;
     fn base_url_https() -> Url {
         Url::parse(&Self::BASE_URL_HTTPS).unwrap()
     }
@@ -164,7 +225,11 @@ pub trait ExchangeOrderbookProps {
 
 /// This is an orderbooks for a given excange and symbol
 #[async_trait]
-pub trait ExchangeOrderbookMethods<S: UpdateState>: ExchangeOrderbookProps {
+pub trait ExchangeOrderbookMethods<
+    S: UpdateState,
+    U: UpdateState + TryFrom<Message, Error = anyhow::Error> + Send + Sync + 'static,
+>: ExchangeOrderbookState<U>
+{
     async fn fetch_symbol_info(
         symbol: Symbol,
         // this specifies the percent above and below the current bid price the max and min prices will be for the orderbook
@@ -173,76 +238,86 @@ pub trait ExchangeOrderbookMethods<S: UpdateState>: ExchangeOrderbookProps {
     async fn fetch_exchange_symbol_info(symbol: Symbol) -> Result<ExchangeSymbolInfo>;
     async fn fetch_current_bid_price(symbol: &Symbol) -> Result<Decimal>;
     async fn fetch_snapshot(&self) -> Result<S>;
-    async fn fetch_update_stream(
-        &self,
-    ) -> Result<Result<WebSocketStream<MaybeTlsStream<TcpStream>>>>;
-    fn update_orderbook<U: UpdateState>(&self, update: U) -> Result<()>;
-    fn create_orderbook(exchange_symbol_info: ExchangeSymbolInfo) -> Result<Orderbook> {
-        let storage_price_min = exchange_symbol_info.storage_price_min();
-        let storage_price_max = exchange_symbol_info.storage_price_max();
-
-        let capacity = (storage_price_min - storage_price_max) as usize;
-        let mut bids: Vec<StorageQuantity> = Vec::with_capacity(capacity + 1);
-        let mut asks: Vec<StorageQuantity> = Vec::with_capacity(capacity + 1);
-
-        for _ in 0..capacity {
-            bids.push(0);
-            asks.push(0);
-        }
-
-        let (tx_summary, _) = watch::channel(OrderbookMessage::Summary("hello".to_string()));
-
-        let orderbook = Orderbook {
-            exchange_symbol_info,
-            storage_ask_min: u32::MAX,
-            storage_bid_max: u32::MIN,
-            bids: Arc::new(Mutex::new(bids)),
-            asks: Arc::new(Mutex::new(asks)),
-            last_update_id: u64::MIN,
-            tx_summary: Arc::new(Mutex::new(tx_summary)),
-        };
-        Ok(orderbook)
-    }
-
+    async fn fetch_update_stream(&self) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+    async fn get_update_from_message(&self, message: Message) -> Result<U>;
+    fn update_orderbook<T: UpdateState>(&self, update: T) -> Result<()>;
     async fn start(&self) -> Result<()> {
-        let (tx_update, mut rx_update) = mpsc::channel(100);
-        let bids_clone = self.orderbook().bids();
-        let tx_summary_clone = self.orderbook().tx_summary();
+        let (tx_update, mut rx_update) = mpsc::channel::<OrderbookMessage<U>>(100);
+        let ob_clone = self.orderbook().clone();
+        let (tx_summary_clone, symbol, exchange) = {
+            let ob = ob_clone.lock().unwrap();
+            let txs = ob.tx_summary();
+            let exchange = ob.exchange_symbol_info.exchange;
+            let symbol = ob.symbol();
+            (txs, symbol, exchange)
+        };
+
+        let mut stream = self.fetch_update_stream().await?;
+
+        tracing::info!("hello");
+        // fetcher - gets updates from the exchange and sends them to the updater
+        let fetcher: tokio::task::JoinHandle<std::result::Result<(), anyhow::Error>> =
+            tokio::spawn(async move {
+                loop {
+                    if let Some(response) = stream.next().await {
+                        match response {
+                            Ok(message) => match U::try_from(message) {
+                                Ok(update) => {
+                                    tx_update
+                                        .send(OrderbookMessage::Update(update))
+                                        .await
+                                        .context("failed to send update")?;
+                                }
+                                Err(err) => {
+                                    tracing::error!("failed to get update from message: {}", err);
+                                }
+                            },
+                            Err(err) => {
+                                tracing::error!("failed to get message: {}", err);
+                                continue;
+                            }
+                        }
+                    } else {
+                        tracing::error!("failed to get message");
+                    }
+                }
+            });
+
+        tracing::info!("hello");
+
+        let mut tx_count = 1;
 
         let updater = tokio::spawn(async move {
-            let mut tx_count = 1;
-
             while let Some(message) = rx_update.recv().await {
                 match message {
-                    OrderbookMessage::Update(msg) => {
-                        tracing::info!("received an update: {}", msg);
+                    OrderbookMessage::Update(update) => {
+                        tracing::info!("update last_update_id: {}", update.last_update_id());
+                        let mut ob = ob_clone.lock().unwrap();
+                        let last_update_id = update.last_update_id();
 
-                        bids_clone.lock().unwrap().push(1);
+                        if let Err(err) = ob.update(update) {
+                            tracing::error!("failed to update orderbook: {}", err);
+                        }
                         let _ = tx_summary_clone.lock().unwrap().send_replace(
-                            OrderbookMessage::Summary(format!("here is a summary {tx_count}!")),
+                            OrderbookMessage::Summary(format!(
+                                "received a summary for {} from {} with last_updated_id {}",
+                                symbol,
+                                exchange.as_str_name(),
+                                last_update_id
+                            )),
                         );
 
                         tracing::info!("sent summary {tx_count}!");
                         tx_count += 1;
                     }
-                    msg => {
-                        tracing::info!("received something else {:?}", msg);
+                    _ => {
+                        tracing::info!("received something else");
                         continue;
                     }
                 }
             }
         });
-
-        // fetcher - gets updates from the exchange and sends them to the updater
-        let fetcher = tokio::spawn(async move {
-            for _ in 0..3 {
-                let _ = tx_update
-                    .send(OrderbookMessage::Update("here is an update!".to_string()))
-                    .await;
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            }
-        });
-
+        tracing::info!("hello");
         updater.await?;
         fetcher.await?;
         Ok(())
@@ -331,7 +406,7 @@ impl ExchangeSymbolInfo {
     }
 
     pub fn display_price_min(&self) -> Decimal {
-        self.symbol.info().display_price_max
+        self.symbol.info().display_price_min
     }
 
     pub fn display_price_max(&self) -> Decimal {
@@ -357,6 +432,7 @@ impl ExchangeSymbolInfo {
 
 /// Updates from all exchanges should implement this trait
 pub trait UpdateState {
+    fn first_update_id(&self) -> u64;
     fn last_update_id(&self) -> u64;
     fn bids_mut(self) -> Vec<[Decimal; 2]>;
     fn asks_mut(self) -> Vec<[Decimal; 2]>;
@@ -367,7 +443,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_converts_prices_correctly() {
+    fn it_converts_numbers_correctly() {
         let symbol_info = SymbolInfo {
             display_price_min: Decimal::new(700, 2),
             display_price_max: Decimal::new(4200, 2),
@@ -389,10 +465,24 @@ mod tests {
             .unwrap();
         assert_eq!(storage_price, u32::MAX);
 
+        let test_num = Decimal::from_i128_with_scale(u64::MAX as i128, 2);
+        println!("test_num: {}", test_num);
+        let storage_quantity = exchange_symbol_info.storage_quantity(test_num).unwrap();
+
+        assert_eq!(storage_quantity, u64::MAX);
+
         if let Err(err) = exchange_symbol_info.storage_price(Decimal::new(u32::MAX as i64 + 1, 2)) {
             assert_eq!(err.to_string(), "price is too large");
         } else {
             panic!("greater than u32 should have failed");
+        };
+
+        if let Err(err) = exchange_symbol_info
+            .storage_quantity(Decimal::from_i128_with_scale(u64::MAX as i128 + 1, 8))
+        {
+            assert_eq!(err.to_string(), "quantity is too large");
+        } else {
+            panic!("greater than u64 should have failed");
         };
 
         if let Err(err) = exchange_symbol_info.storage_price(Decimal::new(-1, 0)) {
@@ -406,5 +496,51 @@ mod tests {
         } else {
             panic!("negative should have failed");
         };
+    }
+
+    #[test]
+    fn it_converts_extreme_numbers_correctly() {
+        let symbol_info = SymbolInfo {
+            display_price_min: Decimal::new(1, 8),
+            display_price_max: Decimal::new(42, 8),
+        };
+        let symbol = Symbol::BTCUSDT { info: symbol_info };
+
+        let exchange_symbol_info: ExchangeSymbolInfo = ExchangeSymbolInfo {
+            exchange: ExchangeType::default(),
+            symbol,
+            scale_price: 8,
+            scale_quantity: 8,
+        };
+
+        assert_eq!(
+            exchange_symbol_info
+                .storage_price(exchange_symbol_info.display_price_min())
+                .unwrap(),
+            1
+        );
+
+        assert_eq!(
+            exchange_symbol_info.display_price_min().to_string(),
+            "0.00000001"
+        );
+
+        assert_eq!(
+            exchange_symbol_info
+                .storage_price(exchange_symbol_info.display_price_max())
+                .unwrap(),
+            42
+        );
+
+        assert_eq!(
+            exchange_symbol_info
+                .storage_quantity(exchange_symbol_info.display_price_min())
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            exchange_symbol_info.get_display_quantity(1).to_string(),
+            "0.00000001"
+        );
     }
 }
