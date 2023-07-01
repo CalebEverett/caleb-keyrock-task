@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use log::error;
-use orderbook_agg::booksummary::orderbook_aggregator_client::OrderbookAggregatorClient;
-use orderbook_agg::booksummary::SummaryRequest;
+use orderbook_agg_old::booksummary::orderbook_aggregator_client::OrderbookAggregatorClient;
+use orderbook_agg_old::booksummary::SummaryRequest;
 use tokio_stream::StreamExt;
 
 use super::key::Key;

@@ -6,7 +6,7 @@ use strum::IntoEnumIterator;
 use tonic::Status;
 
 /// Gets available symbols for a given exchange.
-pub async fn get_symbols(exchange: ExchangeType) -> Result<HashSet<String>, anyhow::Error> {
+pub async fn get_symbols(exchange: ExchangeType) -> Result<HashSet<String>> {
     let symbols = match exchange {
         ExchangeType::Binance => reqwest::get("https://api.binance.us/api/v3/exchangeInfo")
             .await?
@@ -44,7 +44,7 @@ pub async fn get_symbols(exchange: ExchangeType) -> Result<HashSet<String>, anyh
 }
 
 /// Gets symbols available on all exchanges.
-pub async fn get_symbols_all() -> Result<Symbols, anyhow::Error> {
+pub async fn get_symbols_all() -> Result<Symbols> {
     let symbols_vec = try_join_all(
         ExchangeType::iter()
             .map(|exchange| get_symbols(exchange))

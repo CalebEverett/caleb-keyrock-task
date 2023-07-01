@@ -206,23 +206,20 @@ impl Orderbook {
             );
             return Ok(());
         }
+        if let Some(exchange) = update.exchange {
+            if exchange == ExchangeType::Bitstamp {
+                return Ok(());
+            }
+        }
+
         for bid in update.bids.into_iter() {
-            let price = bid[0];
-            let quantity = bid[1];
-            self.add_bid(
-                update.exchange.context("exchange is none")?,
-                [price, quantity],
-            )?
+            self.add_bid(update.exchange.context("exchange is none")?, bid)?
         }
 
         for ask in update.asks.into_iter() {
-            let price = ask[0];
-            let quantity = ask[1];
-            self.add_ask(
-                update.exchange.context("exchange is none")?,
-                [price, quantity],
-            )?
+            self.add_ask(update.exchange.context("exchange is none")?, ask)?
         }
+
         Ok(())
     }
 
@@ -315,9 +312,21 @@ impl Orderbook {
             bail!("Summary spread cannot be calculated".to_string());
         }
 
+        let spread = summary_asks[0].price - summary_bids[0].price;
+
+        if summary_asks[0].exchange == summary_bids[0].exchange && spread < 0. {
+            tracing::error!(
+                "Summary spread of {} should not be negative with bid and ask from the same exchange {:#?} {:#?}",
+                spread,
+                summary_bids[0],
+                summary_asks[0]
+            );
+            bail!("Summary spread cannot be calculated".to_string());
+        }
+
         Ok(Summary {
             symbol: self.symbol.clone(),
-            spread: summary_asks[0].price - summary_bids[0].price,
+            spread,
             timestamp: 0,
             bids: summary_bids,
             asks: summary_asks,
@@ -339,9 +348,71 @@ mod tests {
         }
     }
 
+    // #[test]
+    fn it_converts_prices_correctly() {
+        // assert_eq!(1.001f64.mul(10u32.pow(5) as f64) as u32, 100100);
+        for z in 1..9 {
+            assert_eq!(
+                (30000. + z as f64 / 100.).mul(10u32.pow(2) as f64) as u32,
+                3000000 + z
+            );
+            let price = z as f64;
+            let price_u32 = price.mul(10u32.pow(8) as f64) as u32;
+            let price_f64 = (price_u32 as f64) / (10u32.pow(8) as f64);
+            assert_eq!(price, price_f64);
+        }
+
+        assert_eq!((92.93529970f64).mul(10u32.pow(8) as f64) as u64, 9293529970);
+        let original_prices = vec![
+            0.0, 1.0, 1.1, 1.01, 1.001, 1.0001, 1.00001, 1.000001, 1.0000001,
+        ];
+        let mut price_levels: Vec<Vec<u32>> = vec![vec![0, 100, 110, 101, 100, 100, 100, 100, 100]];
+        let decimals_list = (2..9).into_iter().collect::<Vec<u32>>();
+        for decimals in decimals_list.clone() {
+            let mut price_levels_decimals = vec![];
+            for (idx, price) in price_levels[(decimals - 2) as usize].iter().enumerate() {
+                let mut level_price = price * 10;
+                if idx == decimals as usize + 2 {
+                    level_price += 1;
+                }
+                price_levels_decimals.push(level_price);
+            }
+            price_levels.push(price_levels_decimals);
+        }
+
+        for (i, decimals) in decimals_list.clone().iter().enumerate() {
+            let ob = Orderbook::new(
+                "TEST".to_string(),
+                1,
+                11.0,
+                decimals.clone(),
+                vec![Update {
+                    exchange: Some(ExchangeType::Binance),
+                    last_update_id: 1234,
+                    bids: vec![[1.0, 1.0]],
+                    asks: vec![[1.0, 1.0]],
+                }],
+            )
+            .unwrap();
+            for (j, price) in original_prices.iter().enumerate() {
+                if j + 1 > *decimals as usize {
+                    break;
+                }
+                let level_price = ob.get_price(*price);
+                let display_price = (level_price as f64) / (10u64.pow(decimals.clone()) as f64);
+                println!(
+                    "Decimals: {}, Price: {}, level price: {}, display price: {}, price level: {}, price levels: {:?}, {}, {}",
+                    decimals, price, level_price, display_price, price_levels[i][j], price_levels[i], i, j
+                );
+                assert_eq!(level_price, price_levels[i][j]);
+                assert_eq!(display_price, *price as f64);
+            }
+        }
+    }
+
     #[test]
     fn it_creates_an_orderbook() {
-        let symbol = "BTCUSD".to_string();
+        let symbol = "TEST".to_string();
         let snapshots = vec![Update {
             exchange: Some(ExchangeType::Binance),
             last_update_id: 1234,
@@ -363,7 +434,7 @@ mod tests {
 
     #[test]
     fn adds_a_bid() {
-        let symbol = "BTCUSD".to_string();
+        let symbol = "TEST".to_string();
         let snapshots = vec![Update {
             exchange: Some(ExchangeType::Binance),
             last_update_id: 1234,
@@ -390,7 +461,7 @@ mod tests {
 
     #[test]
     fn removes_a_bid() {
-        let symbol = "BTCUSD".to_string();
+        let symbol = "TEST".to_string();
         let price2 = 26_100.0;
         let price1 = 26_000.0;
 

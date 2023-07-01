@@ -1,5 +1,7 @@
 pub mod booksummary {
     tonic::include_proto!("booksummary");
 }
-pub mod exchanges;
-pub mod utils;
+
+pub mod orderbook;
+pub mod symbol;
+pub mod update;

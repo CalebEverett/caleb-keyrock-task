@@ -1,11 +1,12 @@
+use anyhow::Result;
 use log::{debug, error, warn};
-use orderbook_agg::booksummary::Summary;
 
 use self::actions::Actions;
 use self::state::AppState;
 use crate::app::actions::Action;
 use crate::inputs::key::Key;
 use crate::io::IoEvent;
+use orderbook_agg_old::booksummary::Summary;
 
 pub mod actions;
 pub mod state;
@@ -100,7 +101,7 @@ impl App {
         self.is_loading
     }
 
-    pub async fn initialized(&mut self) -> Result<(), anyhow::Error> {
+    pub async fn initialized(&mut self) -> Result<()> {
         // Update contextual actions
         self.actions = vec![
             Action::Quit,
