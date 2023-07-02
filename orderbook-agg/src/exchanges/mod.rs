@@ -122,8 +122,8 @@ impl<U: Update + Send + Sync + TryFrom<Message>> Orderbook<U> {
     fn bids_mut(&mut self) -> &mut Vec<StorageQuantity> {
         &mut self.bids
     }
-    fn asks(&self) -> Vec<StorageQuantity> {
-        self.asks
+    fn asks(&self) -> &Vec<StorageQuantity> {
+        &self.asks
     }
     fn asks_mut(&mut self) -> &mut Vec<StorageQuantity> {
         &mut self.asks
@@ -225,7 +225,12 @@ impl<U: Update + Send + Sync + TryFrom<Message>> Orderbook<U> {
 }
 
 #[async_trait]
-pub trait ExchangeOrderbook<S, U: Update + Send + Sync + TryFrom<Message>> {
+pub trait ExchangeOrderbook<
+    S: Update,
+    U: Update + Send + Sync + TryFrom<Message> + 'static,
+    Error = anyhow::Error,
+>
+{
     const BASE_URL_HTTPS: &'static str;
     const BASE_URL_WSS: &'static str;
 
@@ -257,35 +262,36 @@ pub trait ExchangeOrderbook<S, U: Update + Send + Sync + TryFrom<Message>> {
     async fn fetch_update_stream(&self) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>>;
     async fn start(&self) -> Result<()> {
         let (tx_update, mut rx_update) = mpsc::channel::<OrderbookMessage<U>>(100);
+        let tx_summary = { self.orderbook().clone().lock().unwrap().tx_summary };
         let ob_clone = self.orderbook().clone();
+
         let mut stream = self.fetch_update_stream().await?;
 
         let fetcher: JoinHandle<std::result::Result<(), anyhow::Error>> =
             tokio::spawn(async move {
                 while let Some(response) = stream.next().await {
-                    // match response {
-                    //     Ok(message) => match U::try_from(message) {
-                    //         Ok(update) => {
-                    //             tx_update
-                    //                 .send(OrderbookMessage::Update(update))
-                    //                 .await
-                    //                 .context("failed to send update")?;
-                    //         }
-                    //         Err(err) => {
-                    //             tracing::error!("failed to get update from message");
-                    //         }
-                    //     },
-                    //     Err(err) => {
-                    //         tracing::error!("failed to get message: {}", err);
-                    //         continue;
-                    //     }
-                    // }
+                    match response {
+                        Ok(message) => match U::try_from(message) {
+                            Ok(update) => {
+                                tx_update
+                                    .send(OrderbookMessage::Update(update))
+                                    .await
+                                    .context("failed to send update")?;
+                            }
+                            Err(err) => {
+                                tracing::error!("failed to get update from message");
+                            }
+                        },
+                        Err(err) => {
+                            tracing::error!("failed to get message: {}", err);
+                            continue;
+                        }
+                    }
                 }
                 Ok(())
             });
 
         let updater: JoinHandle<()> = tokio::spawn(async move {
-            let tx_summary = ob_clone.lock().unwrap().tx_summary;
             let mut tx_count = 1;
             while let Some(message) = rx_update.recv().await {
                 match message {

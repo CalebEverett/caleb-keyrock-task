@@ -3,7 +3,7 @@ use crate::booksummary::Exchange;
 use crate::exchanges::Update;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use data::{BestPrice, ExchangeInfo, Snapshot};
+use data::{BestPrice, BookUpdate, ExchangeInfo, Snapshot};
 use futures::future::try_join;
 use rust_decimal::Decimal;
 use std::sync::{Arc, Mutex};
@@ -17,14 +17,12 @@ pub struct BinanceOrderbook<U> {
 }
 
 #[async_trait]
-impl<S: Update, U: Update + Send + Sync + TryFrom<Message>> ExchangeOrderbook<S, U>
-    for BinanceOrderbook<U>
-{
+impl ExchangeOrderbook<Snapshot, BookUpdate> for BinanceOrderbook<BookUpdate> {
     // make sure these have trailing slashes
     const BASE_URL_HTTPS: &'static str = "https://www.binance.us/api/v3/";
     const BASE_URL_WSS: &'static str = "wss://stream.binance.us:9443/ws/";
 
-    fn orderbook(&self) -> Arc<Mutex<Orderbook<U>>> {
+    fn orderbook(&self) -> Arc<Mutex<Orderbook<BookUpdate>>> {
         self.orderbook.clone()
     }
 
@@ -47,7 +45,8 @@ impl<S: Update, U: Update + Send + Sync + TryFrom<Message>> ExchangeOrderbook<S,
 
         let scale_quantity = exchange_info.scale_quantity()?;
 
-        let orderbook = Orderbook::<U>::new(exchange, symbol, 0, 0, scale_price, scale_quantity);
+        let orderbook =
+            Orderbook::<BookUpdate>::new(exchange, symbol, 0, 0, scale_price, scale_quantity);
 
         let exchange_order_book = BinanceOrderbook {
             orderbook: Arc::new(Mutex::new(orderbook)),
