@@ -1,14 +1,12 @@
 use anyhow::Result;
 use orderbook_agg::exchanges::{
     binance::{data::Update, BinanceOrderbook},
-    ExchangeOrderbookMethods, ExchangeOrderbookState, Symbol, SymbolInfo,
+    ExchangeOrderbook, ExchangeOrderbookMethods, Symbol, SymbolInfo,
 };
 use tokio::task::JoinHandle;
 
-async fn start(symbol: Symbol) -> Result<Vec<JoinHandle<()>>> {
-    let symbol = BinanceOrderbook::fetch_symbol_info(symbol, 5).await?;
-    let exchange_symbol_info = BinanceOrderbook::fetch_exchange_symbol_info(symbol).await?;
-    let orderbook = BinanceOrderbook::<Update>::new(exchange_symbol_info);
+async fn start(exchange: Exchange, symbol: Symbol, price_range: u8) -> Result<Vec<JoinHandle<()>>> {
+    let orderbook = BinanceOrderbook::new(exchange, symbol, price_range).await?;
     let ob_clone = orderbook.orderbook();
     let mut rx_summary = {
         let ob = ob_clone.lock().unwrap();
@@ -35,16 +33,11 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    let symbols = vec![
-        Symbol::BTCUSDT {
-            info: SymbolInfo::default(),
-        },
-        Symbol::BTCUSD {
-            info: SymbolInfo::default(),
-        },
-    ];
+    let symbols = vec![Symbol::BTCUSDT, Symbol::BTCUSD];
 
-    let handles = futures::future::join_all(symbols.into_iter().map(|s| start(s))).await;
+    let handles =
+        futures::future::join_all(symbols.into_iter().map(|s| start(s, Exchange::Binance, 3)))
+            .await;
     for handle in handles.into_iter().flatten().flatten() {
         handle.await?;
     }

@@ -10,7 +10,7 @@ service OrderbookAggregator {
 
 message Empty {}
 
-enum ExchangeType {
+enum Exchange {
   BINANCE = 0;
   BITSTAMP = 1;
 }
@@ -33,7 +33,7 @@ message Summary {
 }
 
 message Level {
-  ExchangeType exchange = 1;
+  Exchange exchange = 1;
   double price = 2;
   double quantity = 3;
 }

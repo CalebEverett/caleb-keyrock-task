@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Ok, Result};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -6,7 +6,7 @@ use std::str::FromStr;
 use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
-use crate::exchanges::UpdateState;
+use crate::exchanges::Update;
 
 fn from_str<'de, D>(deserializer: D) -> Result<Vec<[Decimal; 2]>, D::Error>
 where
@@ -29,9 +29,9 @@ pub struct Snapshot {
     pub asks: Vec<[Decimal; 2]>,
 }
 
-impl UpdateState for Snapshot {
-    fn first_update_id(&self) -> u64 {
-        self.last_update_id - 1
+impl Update for Snapshot {
+    fn validate(&self) -> Result<()> {
+        Ok(())
     }
     fn last_update_id(&self) -> u64 {
         self.last_update_id
@@ -60,7 +60,7 @@ impl Snapshot {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Update {
+pub struct BookUpdate {
     #[serde(alias = "U")]
     pub first_update_id: u64,
     #[serde(alias = "u")]
@@ -71,9 +71,9 @@ pub struct Update {
     pub asks: Vec<[Decimal; 2]>,
 }
 
-impl UpdateState for Update {
-    fn first_update_id(&self) -> u64 {
-        self.last_update_id
+impl Update for BookUpdate {
+    fn validate(&self) -> Result<()> {
+        Ok(())
     }
     fn last_update_id(&self) -> u64 {
         self.last_update_id
@@ -87,7 +87,7 @@ impl UpdateState for Update {
     }
 }
 
-impl TryFrom<Message> for Update {
+impl TryFrom<Message> for BookUpdate {
     type Error = anyhow::Error;
     fn try_from(item: Message) -> Result<Self> {
         serde_json::from_slice::<Self>(&item.into_data()).context("Failed to deserialize update")
