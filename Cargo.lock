@@ -1146,6 +1146,7 @@ dependencies = [
  "chrono",
  "futures",
  "memory-stats",
+ "num-traits",
  "prost",
  "protobuf-json-mapping",
  "protoc",

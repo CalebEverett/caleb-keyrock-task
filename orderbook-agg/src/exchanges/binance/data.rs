@@ -6,7 +6,7 @@ use std::str::FromStr;
 use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
-use crate::exchanges::UpdateState;
+use crate::{core::orderbook::Update, Symbol};
 
 fn from_str<'de, D>(deserializer: D) -> Result<Vec<[Decimal; 2]>, D::Error>
 where
@@ -29,20 +29,20 @@ pub struct Snapshot {
     pub asks: Vec<[Decimal; 2]>,
 }
 
-impl UpdateState for Snapshot {
-    fn first_update_id(&self) -> u64 {
-        self.last_update_id - 1
+impl Update for Snapshot {
+    fn validate(&self) -> Result<()> {
+        Ok(())
     }
     fn last_update_id(&self) -> u64 {
         self.last_update_id
     }
 
-    fn bids_mut(self) -> Vec<[Decimal; 2]> {
-        self.bids
+    fn bids_mut(&mut self) -> &mut Vec<[Decimal; 2]> {
+        &mut self.bids
     }
 
-    fn asks_mut(self) -> Vec<[Decimal; 2]> {
-        self.asks
+    fn asks_mut(&mut self) -> &mut Vec<[Decimal; 2]> {
+        &mut self.asks
     }
 }
 
@@ -60,7 +60,7 @@ impl Snapshot {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Update {
+pub struct BookUpdate {
     #[serde(alias = "U")]
     pub first_update_id: u64,
     #[serde(alias = "u")]
@@ -71,23 +71,23 @@ pub struct Update {
     pub asks: Vec<[Decimal; 2]>,
 }
 
-impl UpdateState for Update {
-    fn first_update_id(&self) -> u64 {
-        self.last_update_id
+impl Update for BookUpdate {
+    fn validate(&self) -> Result<()> {
+        Ok(())
     }
     fn last_update_id(&self) -> u64 {
         self.last_update_id
     }
-    fn bids_mut(self) -> Vec<[Decimal; 2]> {
-        self.bids
+    fn bids_mut(&mut self) -> &mut Vec<[Decimal; 2]> {
+        &mut self.bids
     }
 
-    fn asks_mut(self) -> Vec<[Decimal; 2]> {
-        self.asks
+    fn asks_mut(&mut self) -> &mut Vec<[Decimal; 2]> {
+        &mut self.asks
     }
 }
 
-impl TryFrom<Message> for Update {
+impl TryFrom<Message> for BookUpdate {
     type Error = anyhow::Error;
     fn try_from(item: Message) -> Result<Self> {
         serde_json::from_slice::<Self>(&item.into_data()).context("Failed to deserialize update")
@@ -127,13 +127,23 @@ pub(super) struct SymbolData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct ExchangeInfo {
+pub(super) struct ExchangeInfoBinance {
     pub symbols: Vec<SymbolData>,
 }
+impl ExchangeInfoBinance {
+    fn symbol(&self) -> Result<&SymbolData> {
+        let symbol = self.symbols.first().context("failed to get symbol")?;
+        Ok(symbol)
+    }
 
-impl ExchangeInfo {
-    pub(super) async fn fetch(url: Url) -> Result<Self> {
-        let exchange_info = reqwest::get(url)
+    pub async fn fetch(url: Url, symbol: &Symbol) -> Result<Self> {
+        let mut endpoint = url.join("exchangeInfo").unwrap();
+        endpoint
+            .query_pairs_mut()
+            .append_pair("symbol", &symbol.to_string())
+            .finish();
+
+        let exchange_info = reqwest::get(endpoint)
             .await
             .context("Failed to get exchange info")?
             .json::<Self>()
@@ -142,13 +152,7 @@ impl ExchangeInfo {
         Ok(exchange_info)
     }
 
-    fn symbol(&self) -> Result<&SymbolData> {
-        let symbol = self.symbols.first().context("failed to get symbol")?;
-
-        Ok(symbol)
-    }
-
-    pub(super) fn scale_price(&self) -> Result<u32> {
+    fn scale_price(&self) -> Result<u32> {
         let tick_sizes = self
             .symbol()?
             .filters
@@ -177,9 +181,16 @@ impl ExchangeInfo {
         Ok(scale_price)
     }
 
-    pub(super) fn scale_quantity(&self) -> Result<u32> {
+    fn scale_quantity(&self) -> Result<u32> {
         let scale_quantity = self.symbol()?.base_asset_precision.min(8);
 
         Ok(scale_quantity)
+    }
+
+    pub async fn fetch_scales(url: Url, symbol: &Symbol) -> Result<(u32, u32)> {
+        let exinfo = Self::fetch(url, symbol).await?;
+        let scale_price = exinfo.scale_price()?;
+        let scale_quantity = exinfo.scale_quantity()?;
+        Ok((scale_price, scale_quantity))
     }
 }

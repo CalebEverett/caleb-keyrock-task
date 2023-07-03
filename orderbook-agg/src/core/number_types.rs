@@ -37,13 +37,43 @@ where
     Ok(num_vec)
 }
 
-// TODO: check to see if this is slow
-pub fn display_to_storage_price(mut display_price: Decimal, scale_add: u32) -> Result<u32> {
+pub type DisplayPrice = Decimal;
+impl ToStorage<StoragePrice, DisplayPrice> for DisplayPrice {
+    fn to_storage(&self, scale: u32) -> Result<StoragePrice> {
+        display_to_storage_price(*self, scale)
+    }
+}
+pub type StoragePrice = u32;
+impl ToDisplay<StoragePrice, DisplayPrice> for StoragePrice {
+    fn to_display(&self, scale: u32) -> Result<DisplayPrice> {
+        let mut display_price = Decimal::from(*self);
+        display_price.set_scale(scale)?;
+        Ok(display_price)
+    }
+}
+
+pub type DisplayQuantity = Decimal;
+impl ToStorage<StorageQuantity, DisplayQuantity> for DisplayQuantity {
+    fn to_storage(&self, scale: u32) -> Result<StorageQuantity> {
+        display_to_storage_quantity(*self, scale)
+    }
+}
+
+pub type StorageQuantity = u64;
+impl ToDisplay<StorageQuantity, DisplayQuantity> for StorageQuantity {
+    fn to_display(&self, scale: u32) -> Result<DisplayQuantity> {
+        let mut display_quantity = Decimal::from(*self);
+        display_quantity.set_scale(scale)?;
+        Ok(display_quantity)
+    }
+}
+
+pub fn display_to_storage_price(mut display_price: Decimal, scale: u32) -> Result<StoragePrice> {
     ensure!(
         display_price.is_sign_positive(),
         "price sign must be positive"
     );
-    display_price = display_price.trunc_with_scale(scale_add);
+    display_price = display_price.trunc_with_scale(scale);
     display_price.set_scale(0)?;
 
     let unpacked = display_price.unpack();
@@ -52,13 +82,16 @@ pub fn display_to_storage_price(mut display_price: Decimal, scale_add: u32) -> R
     Ok(unpacked.lo)
 }
 
-pub fn display_to_storage_quantity(mut display_quantity: Decimal, scale_add: u32) -> Result<u64> {
+pub fn display_to_storage_quantity(
+    mut display_quantity: Decimal,
+    scale: u32,
+) -> Result<StorageQuantity> {
     ensure!(
         display_quantity.is_sign_positive(),
         "quantity sign must be positive"
     );
 
-    display_quantity = display_quantity.trunc_with_scale(scale_add);
+    display_quantity = display_quantity.trunc_with_scale(scale);
     display_quantity.set_scale(0)?;
 
     let unpacked = display_quantity.unpack();
@@ -69,4 +102,18 @@ pub fn display_to_storage_quantity(mut display_quantity: Decimal, scale_add: u32
         storage += (unpacked.mid as u64) << 32;
     }
     Ok(storage)
+}
+
+pub trait ToDisplay<S, D> {
+    fn to_display(&self, scale: u32) -> Result<D>;
+}
+pub trait FromDisplay<S, D> {
+    fn from_display(&self) -> Result<S>;
+}
+pub trait ToStorage<S, D> {
+    fn to_storage(&self, scale: u32) -> Result<S>;
+}
+
+pub trait FromStorage<S, D> {
+    fn from_storage(&self, scale: u32) -> Result<D>;
 }

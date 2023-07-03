@@ -1,102 +1,88 @@
+use crate::{
+    booksummary::Exchange,
+    core::{
+        exchange_orderbook::{ExchangeInfo, ExchangeOrderbook},
+        number_types::DisplayPrice,
+        orderbook::{Orderbook, OrderbookMessage},
+    },
+    Symbol,
+};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use rust_decimal::{prelude::FromPrimitive, Decimal};
-use std::{
-    ops::{Add, Div, Mul},
-    sync::{Arc, Mutex},
-};
-use tokio::net::TcpStream;
-use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use data::{BestPrice, BookUpdate, Snapshot};
+use std::sync::{Arc, Mutex};
+use tokio::{net::TcpStream, sync::watch};
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
-use self::data::Update;
-
-use super::{
-    ExchangeOrderbookMethods, ExchangeOrderbookState, ExchangeSymbolInfo, Orderbook, Symbol,
-    SymbolInfo, UpdateState,
-};
-use crate::booksummary::ExchangeType;
-use data::{BestPrice, ExchangeInfo, Snapshot};
+use self::data::ExchangeInfoBinance;
 
 pub mod data;
 
-pub struct BinanceOrderbook<U: UpdateState + 'static> {
-    pub orderbook: Arc<Mutex<Orderbook<U>>>,
+pub struct BinanceOrderbook<U> {
+    pub orderbook: Arc<Mutex<Orderbook>>,
+    pub tx_summary: Arc<Mutex<watch::Sender<OrderbookMessage<U>>>>,
 }
 
-impl<U: UpdateState + 'static> BinanceOrderbook<U> {
-    pub fn new(exchange_symbol_info: ExchangeSymbolInfo) -> Self {
-        let orderbook = Arc::new(Mutex::new(Orderbook::<U>::new(exchange_symbol_info)));
-        Self { orderbook }
-    }
-}
-
-impl<U: UpdateState> ExchangeOrderbookState<U> for BinanceOrderbook<U> {
+#[async_trait]
+impl ExchangeOrderbook<Snapshot, BookUpdate> for BinanceOrderbook<BookUpdate> {
     // make sure these have trailing slashes
     const BASE_URL_HTTPS: &'static str = "https://www.binance.us/api/v3/";
     const BASE_URL_WSS: &'static str = "wss://stream.binance.us:9443/ws/";
 
-    fn orderbook(&self) -> Arc<Mutex<Orderbook<U>>> {
+    async fn new(exchange: Exchange, symbol: Symbol, price_range: u8) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let orderbook = Self::new_orderbook(exchange, symbol, price_range).await?;
+        let (tx_summary, _) = watch::channel(OrderbookMessage::Summary("hello".to_string()));
+        let exchange_orderbook = Self {
+            orderbook: Arc::new(Mutex::new(orderbook)),
+            tx_summary: Arc::new(Mutex::new(tx_summary)),
+        };
+        Ok(exchange_orderbook)
+    }
+
+    fn orderbook(&self) -> Arc<Mutex<Orderbook>> {
         self.orderbook.clone()
     }
-}
-
-#[async_trait]
-impl ExchangeOrderbookMethods<Snapshot, Update> for BinanceOrderbook<Update> {
-    async fn fetch_symbol_info(symbol: Symbol, price_range: i64) -> Result<Symbol> {
-        let price_range_decimal = Decimal::from_i64(price_range)
-            .context("failed to create decimal")?
-            .div(Decimal::new(100, 0))
-            .add(Decimal::new(1, 0));
-        let current_bid_price = Self::fetch_current_bid_price(&symbol).await?;
-        let display_price_max = current_bid_price.mul(price_range_decimal);
-        let display_price_min = current_bid_price.div(price_range_decimal);
-
-        let symbol = symbol.set_info(SymbolInfo {
-            display_price_min,
-            display_price_max,
-        });
-        Ok(symbol)
+    fn tx_summary(&self) -> Arc<Mutex<watch::Sender<OrderbookMessage<BookUpdate>>>> {
+        self.tx_summary.clone()
     }
 
-    async fn fetch_exchange_symbol_info(symbol: Symbol) -> Result<ExchangeSymbolInfo> {
-        let mut url = Self::base_url_https().join("exchangeInfo").unwrap();
-        url.query_pairs_mut()
-            .append_pair("symbol", &symbol.to_string())
-            .finish();
+    fn rx_summary(&self) -> watch::Receiver<OrderbookMessage<BookUpdate>> {
+        self.tx_summary.clone().lock().unwrap().subscribe()
+    }
 
-        let symbol_info = symbol.info();
-        let binance_exchange_info = ExchangeInfo::fetch(url).await?;
-        let scale_price = binance_exchange_info.scale_price()?;
-        let scale_quantity = binance_exchange_info.scale_quantity()?;
+    async fn fetch_exchange_info(symbol: &Symbol, price_range: u8) -> Result<ExchangeInfo> {
+        let (best_price, _) = Self::fetch_prices(symbol).await?;
 
-        let display_price_min = symbol_info.display_price_min.round_dp(scale_price);
-        let display_price_max = symbol_info.display_price_max.round_dp(scale_price);
+        println!("base_url_https: {}", Self::base_url_https());
+        let (scale_price, scale_quantity) =
+            ExchangeInfoBinance::fetch_scales(Self::base_url_https(), symbol).await?;
+        let (storage_price_min, storage_price_max) =
+            ExchangeInfo::get_min_max(best_price, price_range, 0)?;
 
-        let symbol = symbol.set_info(SymbolInfo {
-            display_price_min,
-            display_price_max,
-        });
-
-        let exchange_symbol_info = ExchangeSymbolInfo {
-            exchange: ExchangeType::Binance,
-            symbol,
+        let exchange_info = ExchangeInfo {
+            storage_price_min,
+            storage_price_max,
             scale_price,
             scale_quantity,
         };
-        Ok(exchange_symbol_info)
+
+        Ok(exchange_info)
     }
 
-    async fn fetch_current_bid_price(symbol: &Symbol) -> Result<Decimal> {
+    async fn fetch_prices(symbol: &Symbol) -> Result<(DisplayPrice, DisplayPrice)> {
         let mut url = Self::base_url_https().join("ticker/bookTicker").unwrap();
         url.query_pairs_mut()
             .append_pair("symbol", &symbol.to_string())
             .finish();
         let price = BestPrice::fetch(url).await?;
-        Ok(price.bid_price)
+        Ok((price.bid_price, price.ask_price))
     }
 
     async fn fetch_snapshot(&self) -> Result<Snapshot> {
-        let symbol = self.orderbook().lock().unwrap().symbol();
+        let symbol = self.orderbook().lock().unwrap().symbol;
         let mut url = Self::base_url_https().join("depth").unwrap();
         url.query_pairs_mut()
             .append_pair("symbol", &symbol.to_string())
@@ -110,22 +96,14 @@ impl ExchangeOrderbookMethods<Snapshot, Update> for BinanceOrderbook<Update> {
             .orderbook()
             .lock()
             .unwrap()
-            .symbol()
+            .symbol
             .to_string()
             .to_lowercase();
         let endpoint = format!("{}@depth@100ms", symbol);
         let url = Self::base_url_wss().join(&endpoint).unwrap();
         let (stream, _) = connect_async(url)
             .await
-            .context("Failed to connect to binance wss endpoint")?;
+            .context("Failed to connect to wss endpoint")?;
         Ok(stream)
-    }
-
-    async fn get_update_from_message(&self, message: Message) -> Result<Update> {
-        Update::try_from(message)
-    }
-
-    fn update_orderbook<U: UpdateState>(&self, update: U) -> Result<()> {
-        unimplemented!()
     }
 }
