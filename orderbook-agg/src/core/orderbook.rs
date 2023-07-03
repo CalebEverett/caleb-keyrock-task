@@ -233,7 +233,7 @@ impl Orderbook {
                 let idx = self.idx(ask_min);
                 if asks[idx] > 0 {
                     summary_asks.push((ask_min, asks[idx]));
-                    levels += 1;
+                    levels -= 1;
                 }
                 ask_min += 1;
             }

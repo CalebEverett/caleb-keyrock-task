@@ -15,7 +15,7 @@ async fn start(
     levels: u32,
 ) -> Result<Vec<JoinHandle<()>>> {
     let orderbook = BinanceOrderbook::new(exchange, symbol, price_range).await?;
-    tracing::info!("starting {} {}", exchange, symbol);
+    tracing::info!("starting {exchange} {symbol}, price_range: {price_range}, levels: {levels}");
 
     let mut rx_summary = orderbook.rx_summary();
 

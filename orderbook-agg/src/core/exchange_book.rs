@@ -152,8 +152,15 @@ pub trait ExchangeOrderbook<
                     OrderbookMessage::Update(mut update) => {
                         tracing::debug!("update last_update_id: {}", update.last_update_id());
                         let ob = ob_clone.lock().unwrap();
+                        let exchange = ob.exchange;
+                        let symbol = ob.symbol;
                         if let Err(err) = Self::update(ob, &mut update) {
-                            tracing::error!("failed to update orderbook: {}", err);
+                            tracing::error!(
+                                "failed to update orderbook: {} {} {}",
+                                exchange,
+                                symbol,
+                                err
+                            );
                         } else {
                             let ob = ob_clone.lock().unwrap();
                             if !ob.bids.is_empty() && !ob.asks.is_empty() {
