@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -33,13 +33,12 @@ pub struct Snapshot {
 }
 
 impl Update for Snapshot {
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, _: u64) -> Result<()> {
         Ok(())
     }
     fn last_update_id(&self) -> u64 {
         self.last_update_id
     }
-
     fn bids_mut(&mut self) -> &mut Vec<[Decimal; 2]> {
         &mut self.bids
     }
@@ -75,7 +74,19 @@ pub struct BookUpdate {
 }
 
 impl Update for BookUpdate {
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, last_id: u64) -> Result<()> {
+        let first_update_id = self.first_update_id;
+        if last_id == 0 {
+            return Ok(());
+        }
+        ensure!(
+            first_update_id == last_id + 1,
+            "failed to validate: first_update_id: {first_update_id} != last_id: {last_id} + 1"
+        );
+        ensure!(
+            last_id < self.first_update_id,
+            "failed to validate: last_id: {last_id} >= first_update_id: {first_update_id}"
+        );
         Ok(())
     }
     fn last_update_id(&self) -> u64 {
@@ -94,6 +105,17 @@ impl TryFrom<Message> for BookUpdate {
     type Error = anyhow::Error;
     fn try_from(item: Message) -> Result<Self> {
         serde_json::from_slice::<Self>(&item.into_data()).context("Failed to deserialize update")
+    }
+}
+
+impl From<Snapshot> for BookUpdate {
+    fn from(snapshot: Snapshot) -> Self {
+        Self {
+            first_update_id: 1,
+            last_update_id: snapshot.last_update_id,
+            bids: snapshot.bids,
+            asks: snapshot.asks,
+        }
     }
 }
 

@@ -19,7 +19,7 @@ pub struct BookLevels {
 
 /// Updates from all exchanges should implement this trait
 pub trait Update {
-    fn validate(&self) -> Result<()>;
+    fn validate(&self, last_id: u64) -> Result<()>;
     fn last_update_id(&self) -> u64;
     fn bids_mut(&mut self) -> &mut Vec<[DisplayPrice; 2]>;
     fn asks_mut(&mut self) -> &mut Vec<[DisplayPrice; 2]>;
