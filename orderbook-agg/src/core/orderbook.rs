@@ -1,9 +1,21 @@
-use super::number_types::*;
-use crate::booksummary::Exchange;
-use crate::Symbol;
 use anyhow::Result;
 use rust_decimal::Decimal;
 use tracing::instrument;
+
+use crate::{core::num_types::*, Exchange, Symbol};
+
+#[derive(Debug)]
+pub enum OrderbookMessage<U> {
+    Update(U),
+    BookLevels(BookLevels),
+}
+
+#[derive(Debug, Default)]
+pub struct BookLevels {
+    pub symbol: Symbol,
+    pub bids: Vec<(StoragePrice, StorageQuantity)>,
+    pub asks: Vec<(StoragePrice, StorageQuantity)>,
+}
 
 /// Updates from all exchanges should implement this trait
 pub trait Update {
@@ -13,10 +25,29 @@ pub trait Update {
     fn asks_mut(&mut self) -> &mut Vec<[DisplayPrice; 2]>;
 }
 
-#[derive(Debug)]
-pub enum OrderbookMessage<U> {
-    Update(U),
-    Summary(String),
+#[derive(Debug, Default)]
+pub struct OrderbookArgs {
+    pub storage_price_min: StoragePrice,
+    pub storage_price_max: StoragePrice,
+    pub scale_price: u32,
+    pub scale_quantity: u32,
+}
+
+impl OrderbookArgs {
+    #[instrument]
+    pub(crate) fn get_min_max(
+        price: DisplayPrice,
+        price_range: u8,
+        scale: u32,
+    ) -> Result<(StoragePrice, StoragePrice)> {
+        let mut range = Decimal::from(price_range);
+        range = range.checked_div(Decimal::new(100, 0)).unwrap();
+        range = range.checked_add(Decimal::new(1, 0)).unwrap();
+        tracing::debug!("range: {}", range);
+        let min: StoragePrice = price.checked_div(range).unwrap().to_storage(scale)?;
+        let max: StoragePrice = price.checked_mul(range).unwrap().to_storage(scale)?;
+        Ok((min, max))
+    }
 }
 
 #[derive(Debug)]
@@ -56,8 +87,8 @@ impl Orderbook {
         Self {
             exchange,
             symbol,
-            storage_ask_min: StoragePrice::MIN,
-            storage_bid_max: StoragePrice::MAX,
+            storage_ask_min: StoragePrice::MAX,
+            storage_bid_max: StoragePrice::MIN,
             storage_price_min,
             storage_price_max,
             scale_price,
@@ -77,7 +108,7 @@ impl Orderbook {
         quantity.to_display(self.scale_price)
     }
     fn storage_quantity(&self, quantity: DisplayQuantity) -> Result<StorageQuantity> {
-        quantity.to_storage(self.scale_price)
+        quantity.to_storage(self.scale_quantity)
     }
     fn bids(&self) -> &Vec<StorageQuantity> {
         &self.bids
@@ -95,21 +126,24 @@ impl Orderbook {
         (storage_price - self.storage_price_min) as usize
     }
     /// Adds, modifies or removes a bid from the order book.
+    #[instrument(level = "debug", skip(self))]
     pub fn add_bid(&mut self, level: [Decimal; 2]) -> Result<()> {
         let mut storage_price = self.storage_price(level[0])?;
         if storage_price > self.storage_price_max || storage_price < self.storage_price_min {
             return Ok(());
         }
-
         let storage_quantity = self.storage_quantity(level[1])?;
+
+        tracing::debug!(
+            "storage_price: {}, storage_quantity: {}",
+            storage_price,
+            storage_quantity
+        );
+
         let mut idx = self.idx(storage_price);
 
-        // let mut bids = self.bids.lock().unwrap();
-
-        {
-            let bids = self.bids_mut();
-            bids[idx] = storage_quantity;
-        }
+        let bids = self.bids_mut();
+        bids[idx] = storage_quantity;
 
         if storage_quantity > 0 {
             if storage_price > self.storage_bid_max {
@@ -117,10 +151,10 @@ impl Orderbook {
             }
         } else {
             if storage_price == self.storage_bid_max && storage_quantity == 0 {
-                loop {
+                while storage_price > self.storage_price_min {
                     storage_price -= 1;
                     idx = self.idx(storage_price).clone();
-                    if &self.bids[idx] > &0 {
+                    if self.bids[idx] > 0 {
                         self.storage_bid_max = storage_price;
                         break;
                     }
@@ -130,19 +164,24 @@ impl Orderbook {
         Ok(())
     }
     /// Adds, modifies or removes a bid from the order book.
+    #[instrument(level = "debug", skip(self))]
     pub fn add_ask(&mut self, level: [Decimal; 2]) -> Result<()> {
         let mut storage_price = self.storage_price(level[0])?;
         if storage_price > self.storage_price_max || storage_price < self.storage_price_min {
             return Ok(());
         }
-
         let storage_quantity = self.storage_quantity(level[1])?;
+
+        tracing::debug!(
+            "storage_price: {}, storage_quantity: {}",
+            storage_price,
+            storage_quantity
+        );
+
         let mut idx = self.idx(storage_price);
 
-        {
-            let asks = self.asks_mut();
-            asks[idx] = storage_quantity;
-        }
+        let asks = self.asks_mut();
+        asks[idx] = storage_quantity;
 
         if storage_quantity > 0 {
             if storage_price < self.storage_ask_min {
@@ -150,10 +189,10 @@ impl Orderbook {
             }
         } else {
             if storage_price == self.storage_ask_min && storage_quantity == 0 {
-                loop {
+                while storage_price < self.storage_price_max {
                     storage_price += 1;
                     idx = self.idx(storage_price);
-                    if &self.asks[idx] > &0 {
+                    if self.asks[idx] > 0 {
                         self.storage_ask_min = storage_price;
                         break;
                     }
@@ -161,6 +200,56 @@ impl Orderbook {
             }
         }
         Ok(())
+    }
+    pub fn get_bids_levels(&self, mut levels: u32) -> Vec<(StoragePrice, StorageQuantity)> {
+        let bids = self.bids();
+        let summary_bids = if bids.is_empty() {
+            Vec::new()
+        } else {
+            let mut bid_max = self.storage_bid_max;
+            let mut summary_bids =
+                Vec::<(StoragePrice, StorageQuantity)>::with_capacity(levels as usize);
+            while levels > 0 && bid_max >= self.storage_price_min {
+                let idx = self.idx(bid_max);
+                if bids[idx] > 0 {
+                    summary_bids.push((bid_max, bids[idx]));
+                    levels -= 1;
+                }
+                bid_max -= 1;
+            }
+            summary_bids
+        };
+        summary_bids
+    }
+    pub fn get_asks_levels(&self, mut levels: u32) -> Vec<(StoragePrice, StorageQuantity)> {
+        let asks = self.asks();
+        let summary_asks = if asks.is_empty() {
+            Vec::new()
+        } else {
+            let mut ask_min = self.storage_ask_min;
+            let mut summary_asks =
+                Vec::<(StoragePrice, StorageQuantity)>::with_capacity(levels as usize);
+            while levels > 0 && ask_min <= self.storage_price_max {
+                let idx = self.idx(ask_min);
+                if asks[idx] > 0 {
+                    summary_asks.push((ask_min, asks[idx]));
+                    levels += 1;
+                }
+                ask_min += 1;
+            }
+            summary_asks
+        };
+        summary_asks
+    }
+    pub fn get_book_levels(&self, levels: u32) -> BookLevels {
+        let bids = self.get_bids_levels(levels);
+        let asks = self.get_asks_levels(levels);
+
+        BookLevels {
+            symbol: self.symbol,
+            bids,
+            asks,
+        }
     }
 }
 
@@ -170,7 +259,7 @@ mod tests {
 
     #[test]
     fn it_converts_numbers_correctly() {
-        let ob = Orderbook::new(Exchange::Binance, Symbol::BTCUSDT, 700, 4200, 2, 8);
+        let ob = Orderbook::new(Exchange::BINANCE, Symbol::BTCUSDT, 700, 4200, 2, 8);
 
         let display_price = ob.display_price(4200).unwrap();
         assert_eq!(display_price.to_string(), "42.00");
@@ -212,7 +301,7 @@ mod tests {
 
     #[test]
     fn it_converts_extreme_numbers_correctly() {
-        let ob = Orderbook::new(Exchange::Binance, Symbol::BTCUSDT, 1, 42, 8, 8);
+        let ob = Orderbook::new(Exchange::BINANCE, Symbol::BTCUSDT, 1, 42, 8, 8);
 
         assert_eq!(
             ob.storage_price(ob.display_price(ob.storage_price_min).unwrap())

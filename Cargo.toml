@@ -2,7 +2,6 @@
 
 members = [
     "orderbook-agg",
-    "orderbook-agg-old",
     "terminal-app",
 ]
 

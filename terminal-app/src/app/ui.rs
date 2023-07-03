@@ -1,5 +1,5 @@
 use chrono::{prelude::DateTime, Utc};
-use orderbook_agg_old::booksummary::ExchangeType;
+use orderbook_agg::Exchange;
 use std::time::{Duration, UNIX_EPOCH};
 use symbols::line;
 use tui::backend::Backend;
@@ -261,14 +261,6 @@ fn draw_duration(duration: &Duration) -> LineGauge {
         .ratio(ratio)
 }
 
-fn exchange_string(exchange: i32) -> String {
-    match exchange {
-        0 => ExchangeType::Binance.as_str_name().to_string(),
-        1 => ExchangeType::Bitstamp.as_str_name().to_string(),
-        _ => String::from("Unknown"),
-    }
-}
-
 fn draw_summary(state: &AppState, decimals: u32) -> Table {
     let help_style = Style::default().fg(Color::Gray);
 
@@ -289,7 +281,7 @@ fn draw_summary(state: &AppState, decimals: u32) -> Table {
                     format!("{:>10.5}", level.quantity),
                     help_style,
                 )),
-                Cell::from(Span::styled(exchange_string(level.exchange), help_style)),
+                Cell::from(Span::styled(&level.exchange, help_style)),
             ]);
             rows.push(row);
         }
@@ -313,7 +305,7 @@ fn draw_summary(state: &AppState, decimals: u32) -> Table {
                     format!("{:>10.5}", level.quantity),
                     help_style,
                 )),
-                Cell::from(Span::styled(exchange_string(level.exchange), help_style)),
+                Cell::from(Span::styled(&level.exchange, help_style)),
             ]);
             rows.push(row);
         }

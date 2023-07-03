@@ -1,3 +1,3 @@
-pub mod exchange_orderbook;
-pub mod number_types;
+pub mod exchange_book;
+pub mod num_types;
 pub mod orderbook;

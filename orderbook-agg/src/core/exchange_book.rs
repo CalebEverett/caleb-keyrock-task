@@ -1,10 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use rust_decimal::Decimal;
-use std::{
-    ops::DivAssign,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::{
     net::TcpStream,
     sync::{mpsc, watch},
@@ -14,31 +10,8 @@ use tokio_stream::StreamExt;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use url::Url;
 
-use super::orderbook::{Orderbook, OrderbookMessage, Update};
-use crate::{booksummary::Exchange, core::number_types::*, Symbol};
-
-#[derive(Default)]
-pub struct ExchangeInfo {
-    pub storage_price_min: StoragePrice,
-    pub storage_price_max: StoragePrice,
-    pub scale_price: u32,
-    pub scale_quantity: u32,
-}
-
-impl ExchangeInfo {
-    pub(crate) fn get_min_max(
-        price: DisplayPrice,
-        price_range: u8,
-        scale: u32,
-    ) -> Result<(StoragePrice, StoragePrice)> {
-        let mut range = Decimal::from(price_range);
-        range.div_assign(Decimal::new(1, 2));
-        range.checked_add(Decimal::new(1, 0)).unwrap();
-        let min: StoragePrice = price.checked_div(range).unwrap().to_storage(scale)?;
-        let max: StoragePrice = price.checked_mul(range).unwrap().to_storage(scale)?;
-        Ok((min, max))
-    }
-}
+use super::orderbook::{Orderbook, OrderbookArgs, OrderbookMessage, Update};
+use crate::{core::num_types::*, Exchange, Symbol};
 
 #[async_trait]
 pub trait ExchangeOrderbook<
@@ -67,12 +40,12 @@ pub trait ExchangeOrderbook<
     where
         Self: Sized,
     {
-        let ExchangeInfo {
+        let OrderbookArgs {
             storage_price_min,
             storage_price_max,
             scale_price,
             scale_quantity,
-        } = Self::fetch_exchange_info(&symbol, price_range).await?;
+        } = Self::fetch_orderbook_args(&symbol, price_range).await?;
 
         let orderbook = Orderbook::new(
             exchange,
@@ -84,9 +57,13 @@ pub trait ExchangeOrderbook<
         );
 
         tracing::debug!(
-            "returning orderbook for {} {}",
-            exchange.as_str_name(),
-            symbol
+            "returning orderbook for {} {} min: {} max: {} scale_p: {}, scale_q: {}",
+            exchange,
+            symbol,
+            storage_price_min,
+            storage_price_max,
+            scale_price,
+            scale_quantity
         );
         Ok(orderbook)
     }
@@ -94,7 +71,7 @@ pub trait ExchangeOrderbook<
     async fn fetch_prices(symbol: &Symbol) -> Result<(DisplayPrice, DisplayPrice)>;
 
     /// Fetches precious data from the exchange
-    async fn fetch_exchange_info(symbol: &Symbol, price_range: u8) -> Result<ExchangeInfo>;
+    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderbookArgs>;
 
     /// Fetches the initial snapshot from the exchange
     async fn fetch_snapshot(&self) -> Result<S>;
@@ -111,15 +88,17 @@ pub trait ExchangeOrderbook<
 
         // this is set up this way to be able to consume the update without copying it
         for bid in update.bids_mut().into_iter() {
+            tracing::debug!("adding bid: {:?}", bid);
             ob.add_bid(*bid)?
         }
         for ask in update.asks_mut().into_iter() {
+            tracing::debug!("adding ask: {:?}", ask);
             ob.add_ask(*ask)?
         }
 
         Ok(())
     }
-    async fn start(&self) -> Result<()> {
+    async fn start(&self, levels: u32) -> Result<()> {
         let (tx_update, mut rx_update) = mpsc::channel::<OrderbookMessage<U>>(100);
         let ob_clone = self.orderbook().clone();
         let tx_summary = self.tx_summary().clone();
@@ -131,18 +110,23 @@ pub trait ExchangeOrderbook<
                 while let Some(response) = stream.next().await {
                     match response {
                         Ok(message) => match U::try_from(message) {
-                            Ok(update) => {
+                            Ok(mut update) => {
+                                tracing::debug!(
+                                    "sending update with {} bids and {} asks",
+                                    update.bids_mut().len(),
+                                    update.asks_mut().len()
+                                );
                                 tx_update
                                     .send(OrderbookMessage::Update(update))
                                     .await
                                     .context("failed to send update")?;
                             }
-                            Err(err) => {
-                                tracing::error!("failed to get update from message {}", err);
+                            Err(_) => {
+                                tracing::error!("failed to get update from message");
                             }
                         },
-                        Err(err) => {
-                            tracing::error!("failed to get message: {}", err);
+                        Err(_) => {
+                            tracing::error!("failed to get message");
                             continue;
                         }
                     }
@@ -155,25 +139,26 @@ pub trait ExchangeOrderbook<
             while let Some(message) = rx_update.recv().await {
                 match message {
                     OrderbookMessage::Update(mut update) => {
-                        tracing::info!("update last_update_id: {}", update.last_update_id());
-                        let last_update_id = update.last_update_id();
+                        tracing::debug!("update last_update_id: {}", update.last_update_id());
                         let ob = ob_clone.lock().unwrap();
 
-                        if let Err(err) = Self::update(ob, &mut update) {
-                            tracing::error!("failed to update orderbook: {}", err);
+                        if let Err(_) = Self::update(ob, &mut update) {
+                            tracing::error!("failed to update orderbook");
+                        } else {
+                            let ob = ob_clone.lock().unwrap();
+                            if !ob.bids.is_empty() && !ob.asks.is_empty() {
+                                let book_levels = ob.get_book_levels(levels);
+                                let _ = tx_summary
+                                    .lock()
+                                    .unwrap()
+                                    .send_replace(OrderbookMessage::BookLevels(book_levels));
+                            }
                         }
-                        let _ = tx_summary
-                            .lock()
-                            .unwrap()
-                            .send_replace(OrderbookMessage::Summary(format!(
-                                "received a summary {last_update_id} {tx_count}",
-                            )));
-
-                        tracing::info!("sent summary {tx_count}!");
+                        tracing::debug!("sent summary {tx_count}!");
                         tx_count += 1;
                     }
                     _ => {
-                        tracing::info!("received something else");
+                        tracing::error!("received something else");
                         continue;
                     }
                 }

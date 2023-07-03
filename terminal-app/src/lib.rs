@@ -7,8 +7,8 @@ use app::{App, AppReturn};
 use inputs::events::Events;
 use inputs::InputEvent;
 use io::IoEvent;
-use orderbook_agg_old::booksummary::orderbook_aggregator_client::OrderbookAggregatorClient;
-use orderbook_agg_old::booksummary::SummaryRequest;
+use orderbook_agg::booksummary::orderbook_aggregator_client::OrderbookAggregatorClient;
+use orderbook_agg::booksummary::SummaryRequest;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
 
