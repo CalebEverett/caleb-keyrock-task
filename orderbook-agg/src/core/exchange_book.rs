@@ -15,8 +15,14 @@ use crate::{core::num_types::*, Exchange, Symbol};
 
 #[async_trait]
 pub trait ExchangeOrderbook<
-    S: Update,
-    U: Update + TryFrom<Message, Error = anyhow::Error> + Send + Sync + 'static,
+    S: Update + Send,
+    U: std::fmt::Debug
+        + Update
+        + From<S>
+        + TryFrom<Message, Error = anyhow::Error>
+        + Send
+        + Sync
+        + 'static,
     Error = anyhow::Error,
 >
 {
@@ -79,12 +85,9 @@ pub trait ExchangeOrderbook<
     /// Fetches the update stream from the exchange
     async fn fetch_update_stream(&self) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>>;
     fn update(mut ob: MutexGuard<Orderbook>, update: &mut U) -> Result<()> {
-        if update.last_update_id() > ob.last_update_id {
-            ob.last_update_id = update.last_update_id();
-        } else {
-            tracing::info!("Skipping update",);
-            return Ok(());
-        }
+        tracing::debug!("update {:#?}", update);
+
+        update.validate(ob.last_update_id)?;
 
         // this is set up this way to be able to consume the update without copying it
         for bid in update.bids_mut().into_iter() {
@@ -96,6 +99,8 @@ pub trait ExchangeOrderbook<
             ob.add_ask(*ask)?
         }
 
+        ob.last_update_id = update.last_update_id();
+
         Ok(())
     }
     async fn start(&self, levels: u32) -> Result<()> {
@@ -104,9 +109,15 @@ pub trait ExchangeOrderbook<
         let tx_summary = self.tx_summary().clone();
 
         let mut stream = self.fetch_update_stream().await?;
+        let snapshot = self.fetch_snapshot().await?;
+        let snapshot_update = U::from(snapshot);
 
         let fetcher: JoinHandle<std::result::Result<(), anyhow::Error>> =
             tokio::spawn(async move {
+                tx_update
+                    .send(OrderbookMessage::Update(snapshot_update))
+                    .await
+                    .context("failed to send snapshot")?;
                 while let Some(response) = stream.next().await {
                     match response {
                         Ok(message) => match U::try_from(message) {
@@ -141,9 +152,8 @@ pub trait ExchangeOrderbook<
                     OrderbookMessage::Update(mut update) => {
                         tracing::debug!("update last_update_id: {}", update.last_update_id());
                         let ob = ob_clone.lock().unwrap();
-
-                        if let Err(_) = Self::update(ob, &mut update) {
-                            tracing::error!("failed to update orderbook");
+                        if let Err(err) = Self::update(ob, &mut update) {
+                            tracing::error!("failed to update orderbook: {}", err);
                         } else {
                             let ob = ob_clone.lock().unwrap();
                             if !ob.bids.is_empty() && !ob.asks.is_empty() {
