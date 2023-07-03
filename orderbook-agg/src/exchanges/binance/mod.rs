@@ -1,11 +1,10 @@
 use crate::{
-    booksummary::Exchange,
     core::{
-        exchange_orderbook::{ExchangeInfo, ExchangeOrderbook},
-        number_types::DisplayPrice,
-        orderbook::{Orderbook, OrderbookMessage},
+        exchange_book::ExchangeOrderbook,
+        num_types::DisplayPrice,
+        orderbook::{BookLevels, Orderbook, OrderbookArgs, OrderbookMessage},
     },
-    Symbol,
+    Exchange, Symbol,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -34,7 +33,7 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BinanceOrderbook<BookUpdate> {
         Self: Sized,
     {
         let orderbook = Self::new_orderbook(exchange, symbol, price_range).await?;
-        let (tx_summary, _) = watch::channel(OrderbookMessage::Summary("hello".to_string()));
+        let (tx_summary, _) = watch::channel(OrderbookMessage::BookLevels(BookLevels::default()));
         let exchange_orderbook = Self {
             orderbook: Arc::new(Mutex::new(orderbook)),
             tx_summary: Arc::new(Mutex::new(tx_summary)),
@@ -53,23 +52,25 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BinanceOrderbook<BookUpdate> {
         self.tx_summary.clone().lock().unwrap().subscribe()
     }
 
-    async fn fetch_exchange_info(symbol: &Symbol, price_range: u8) -> Result<ExchangeInfo> {
+    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderbookArgs> {
         let (best_price, _) = Self::fetch_prices(symbol).await?;
 
         println!("base_url_https: {}", Self::base_url_https());
         let (scale_price, scale_quantity) =
             ExchangeInfoBinance::fetch_scales(Self::base_url_https(), symbol).await?;
         let (storage_price_min, storage_price_max) =
-            ExchangeInfo::get_min_max(best_price, price_range, 0)?;
+            OrderbookArgs::get_min_max(best_price, price_range, scale_price)?;
 
-        let exchange_info = ExchangeInfo {
+        let args = OrderbookArgs {
             storage_price_min,
             storage_price_max,
             scale_price,
             scale_quantity,
         };
 
-        Ok(exchange_info)
+        tracing::debug!("orderbook args: {:#?}", args);
+
+        Ok(args)
     }
 
     async fn fetch_prices(symbol: &Symbol) -> Result<(DisplayPrice, DisplayPrice)> {

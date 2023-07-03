@@ -73,7 +73,7 @@ pub fn display_to_storage_price(mut display_price: Decimal, scale: u32) -> Resul
         display_price.is_sign_positive(),
         "price sign must be positive"
     );
-    display_price = display_price.trunc_with_scale(scale);
+    display_price = display_price.round_dp(scale);
     display_price.set_scale(0)?;
 
     let unpacked = display_price.unpack();
@@ -91,7 +91,7 @@ pub fn display_to_storage_quantity(
         "quantity sign must be positive"
     );
 
-    display_quantity = display_quantity.trunc_with_scale(scale);
+    display_quantity = display_quantity.round_dp(scale);
     display_quantity.set_scale(0)?;
 
     let unpacked = display_quantity.unpack();

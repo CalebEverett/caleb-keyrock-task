@@ -23,3 +23,19 @@ impl std::fmt::Display for Symbol {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub enum Exchange {
+    #[default]
+    BINANCE,
+    BITSTAMP,
+}
+
+impl std::fmt::Display for Exchange {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Exchange::BINANCE => write!(f, "BINANCE"),
+            Exchange::BITSTAMP => write!(f, "BITSTAMP"),
+        }
+    }
+}

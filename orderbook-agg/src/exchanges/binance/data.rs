@@ -6,7 +6,10 @@ use std::str::FromStr;
 use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
-use crate::{core::orderbook::Update, Symbol};
+use crate::{
+    core::{num_types::DisplayPrice, orderbook::Update},
+    Symbol,
+};
 
 fn from_str<'de, D>(deserializer: D) -> Result<Vec<[Decimal; 2]>, D::Error>
 where
@@ -66,9 +69,9 @@ pub struct BookUpdate {
     #[serde(alias = "u")]
     pub last_update_id: u64,
     #[serde(alias = "b", deserialize_with = "from_str")]
-    pub bids: Vec<[Decimal; 2]>,
+    pub bids: Vec<[DisplayPrice; 2]>,
     #[serde(alias = "a", deserialize_with = "from_str")]
-    pub asks: Vec<[Decimal; 2]>,
+    pub asks: Vec<[DisplayPrice; 2]>,
 }
 
 impl Update for BookUpdate {
@@ -78,11 +81,11 @@ impl Update for BookUpdate {
     fn last_update_id(&self) -> u64 {
         self.last_update_id
     }
-    fn bids_mut(&mut self) -> &mut Vec<[Decimal; 2]> {
+    fn bids_mut(&mut self) -> &mut Vec<[DisplayPrice; 2]> {
         &mut self.bids
     }
 
-    fn asks_mut(&mut self) -> &mut Vec<[Decimal; 2]> {
+    fn asks_mut(&mut self) -> &mut Vec<[DisplayPrice; 2]> {
         &mut self.asks
     }
 }

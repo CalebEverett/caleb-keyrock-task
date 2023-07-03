@@ -10,11 +10,6 @@ service OrderbookAggregator {
 
 message Empty {}
 
-enum Exchange {
-  BINANCE = 0;
-  BITSTAMP = 1;
-}
-
 message SummaryRequest {
   string symbol = 1;
   uint32 levels = 2;
@@ -25,15 +20,15 @@ message SummaryRequest {
 message Symbols { repeated string symbols = 1; }
 
 message Summary {
-  string symbol = 1;
-  double spread = 2;
-  uint64 timestamp = 3;
-  repeated Level bids = 4;
-  repeated Level asks = 5;
+  string symbol = 2;
+  double spread = 3;
+  uint64 timestamp = 4;
+  repeated Level bids = 5;
+  repeated Level asks = 6;
 }
 
 message Level {
-  Exchange exchange = 1;
+  string exchange = 1;
   double price = 2;
   double quantity = 3;
 }
