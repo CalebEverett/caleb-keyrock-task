@@ -1,5 +1,5 @@
 use key::Key;
-use orderbook_agg_old::booksummary::Summary;
+use orderbook_agg::booksummary::Summary;
 
 pub mod events;
 pub mod key;

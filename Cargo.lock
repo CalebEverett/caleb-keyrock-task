@@ -473,12 +473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
-
-[[package]]
 name = "either"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1153,36 +1147,6 @@ dependencies = [
  "reqwest",
  "rust_decimal",
  "rust_decimal_macros",
- "serde",
- "serde-aux",
- "serde_json",
- "strum",
- "time 0.3.22",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite",
- "tonic",
- "tonic-build",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "orderbook-agg-old"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap",
- "dotenv",
- "futures",
- "memory-stats",
- "prost",
- "protobuf-json-mapping",
- "protoc",
- "reqwest",
  "serde",
  "serde-aux",
  "serde_json",
@@ -1930,7 +1894,7 @@ dependencies = [
  "clap",
  "crossterm 0.26.1",
  "log",
- "orderbook-agg-old",
+ "orderbook-agg",
  "time 0.3.22",
  "tokio",
  "tokio-stream",
