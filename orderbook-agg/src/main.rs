@@ -73,24 +73,9 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    let symbols = vec![Symbol::BTCUSDT];
+    let symbols = vec![Symbol::BTCUSDT, Symbol::BTCUSDT, Symbol::ETHBTC];
     let price_range = 3;
     let levels = 2;
-
-    // let mut handles = Vec::new();
-
-    // for symbol in symbols {
-    //     for exchange in exchanges.clone() {
-    //         match exchange {
-    //             Exchange::BINANCE => {
-    //                 handles.push(start_binance(exchange, symbol, price_range, levels).await?);
-    //             }
-    //             Exchange::BITSTAMP => {
-    //                 handles.push(start_bitstamp(exchange, symbol, price_range, levels).await?);
-    //             }
-    //         }
-    //     }
-    // }
 
     let handles_binance = try_join_all(
         symbols
@@ -114,13 +99,6 @@ async fn main() -> Result<()> {
             tracing::error!("bitstamp error: {}", e);
         }
     }
-
-    // for (handle_bit, handle_bin) in handles_bitstamp.iter().zip(handles_binance.iter()) {
-    //     for (hbit, hbin) in handle_bit.iter().zip(handle_bin.iter()) {
-    //         hbit.await?;
-    //         hbin.await?;
-    //     }
-    // }
 
     tracing::info!("done");
     Ok(())
