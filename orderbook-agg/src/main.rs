@@ -3,20 +3,27 @@ use std::ops::Deref;
 use anyhow::Result;
 use futures::future::try_join_all;
 use orderbook_agg::{
-    core::exchange_book::ExchangeOrderbook, core::orderbook::OrderbookMessage,
-    exchanges::binance::BinanceOrderbook, Exchange, Symbol,
+    core::exchange_book::ExchangeOrderbook,
+    core::orderbook::{BookLevels, OrderbookMessage},
+    exchanges::{binance::BinanceOrderbook, bitstamp::BitstampOrderbook},
+    Exchange, Symbol,
 };
-use tokio::task::JoinHandle;
 
-async fn start(
-    exchange: Exchange,
-    symbol: Symbol,
-    price_range: u8,
-    levels: u32,
-) -> Result<Vec<JoinHandle<()>>> {
-    let orderbook = BinanceOrderbook::new(exchange, symbol, price_range).await?;
-    tracing::info!("starting {exchange} {symbol}, price_range: {price_range}, levels: {levels}");
+fn print_book_levels(book_levels: &BookLevels) {
+    println!(
+        "exchange: {}, symbol, {}, best_bid: {:?}, best_ask: {:?}, spread: {:?}, bid_qty: {}, ask_qty: {}",
+        book_levels.exchange,
+        book_levels.symbol,
+        book_levels.bids[0].0,
+        book_levels.asks[0].0,
+        (book_levels.asks[0].0 - book_levels.bids[0].0),
+        book_levels.bids.len(),
+        book_levels.asks.len(),
+    );
+}
 
+async fn start_binance(symbol: Symbol, price_range: u8, levels: u32) -> Result<()> {
+    let orderbook = BinanceOrderbook::new(Exchange::BINANCE, symbol, price_range).await?;
     let mut rx_summary = orderbook.rx_summary();
 
     let rx_handle = tokio::spawn(async move {
@@ -25,23 +32,37 @@ async fn start(
                 if book_levels.bids.is_empty() || book_levels.asks.is_empty() {
                     continue;
                 }
-                println!(
-                    "exchange: {}, symbol, {}, best_bid: {:?}, best_ask: {:?}, spread: {:?}, bid_qty: {}, ask_qty: {}",
-                    exchange,
-                    symbol,
-                    book_levels.bids[0].0,
-                    book_levels.asks[0].0,
-                    (book_levels.asks[0].0 - book_levels.bids[0].0),
-                    book_levels.bids.len(),
-                    book_levels.asks.len()
-                );
+                print_book_levels(book_levels);
             }
         }
     });
     let ob_handle = tokio::spawn(async move {
         orderbook.start(levels).await.unwrap();
     });
-    Ok(vec![rx_handle, ob_handle])
+    rx_handle.await?;
+    ob_handle.await?;
+    Ok(())
+}
+async fn start_bitstamp(symbol: Symbol, price_range: u8, levels: u32) -> Result<()> {
+    let orderbook = BitstampOrderbook::new(Exchange::BITSTAMP, symbol, price_range).await?;
+    let mut rx_summary = orderbook.rx_summary();
+
+    let rx_handle = tokio::spawn(async move {
+        while rx_summary.changed().await.is_ok() {
+            if let OrderbookMessage::BookLevels(book_levels) = rx_summary.borrow().deref() {
+                if book_levels.bids.is_empty() || book_levels.asks.is_empty() {
+                    continue;
+                }
+                print_book_levels(book_levels);
+            }
+        }
+    });
+    let ob_handle = tokio::spawn(async move {
+        orderbook.start(levels).await.unwrap();
+    });
+    rx_handle.await?;
+    ob_handle.await?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -52,24 +73,54 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    let symbols = vec![Symbol::BTCUSDT, Symbol::BTCUSD];
-    let exchange = Exchange::BINANCE;
+    let symbols = vec![Symbol::BTCUSDT];
     let price_range = 3;
     let levels = 2;
 
-    let handles = try_join_all(
+    // let mut handles = Vec::new();
+
+    // for symbol in symbols {
+    //     for exchange in exchanges.clone() {
+    //         match exchange {
+    //             Exchange::BINANCE => {
+    //                 handles.push(start_binance(exchange, symbol, price_range, levels).await?);
+    //             }
+    //             Exchange::BITSTAMP => {
+    //                 handles.push(start_bitstamp(exchange, symbol, price_range, levels).await?);
+    //             }
+    //         }
+    //     }
+    // }
+
+    let handles_binance = try_join_all(
         symbols
             .iter()
-            .map(|symbol| start(exchange, *symbol, price_range, levels))
+            .map(|symbol| start_binance(*symbol, price_range, levels))
             .collect::<Vec<_>>(),
-    )
-    .await?;
+    );
 
-    for handles in handles {
-        for handle in handles {
-            handle.await?;
+    let handles_bitstamp = try_join_all(
+        symbols
+            .iter()
+            .map(|symbol| start_bitstamp(*symbol, price_range, levels))
+            .collect::<Vec<_>>(),
+    );
+
+    tokio::select! {
+        Err(e) = handles_binance => {
+            tracing::error!("binance error: {}", e);
+        }
+        Err(e) = handles_bitstamp => {
+            tracing::error!("bitstamp error: {}", e);
         }
     }
+
+    // for (handle_bit, handle_bin) in handles_bitstamp.iter().zip(handles_binance.iter()) {
+    //     for (hbit, hbin) in handle_bit.iter().zip(handle_bin.iter()) {
+    //         hbit.await?;
+    //         hbin.await?;
+    //     }
+    // }
 
     tracing::info!("done");
     Ok(())

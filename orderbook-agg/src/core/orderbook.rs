@@ -12,6 +12,7 @@ pub enum OrderbookMessage<U> {
 
 #[derive(Debug, Default)]
 pub struct BookLevels {
+    pub exchange: Exchange,
     pub symbol: Symbol,
     pub bids: Vec<(StoragePrice, StorageQuantity)>,
     pub asks: Vec<(StoragePrice, StorageQuantity)>,
@@ -98,13 +99,14 @@ impl Orderbook {
             last_update_id: u64::MIN,
         }
     }
-    fn display_price(&self, price: StoragePrice) -> Result<DisplayPrice> {
+
+    pub fn display_price(&self, price: StoragePrice) -> Result<DisplayPrice> {
         price.to_display(self.scale_price)
     }
     fn storage_price(&self, price: DisplayPrice) -> Result<StoragePrice> {
         price.to_storage(self.scale_price)
     }
-    fn display_quantity(&self, quantity: StorageQuantity) -> Result<DisplayQuantity> {
+    pub fn display_quantity(&self, quantity: StorageQuantity) -> Result<DisplayQuantity> {
         quantity.to_display(self.scale_price)
     }
     fn storage_quantity(&self, quantity: DisplayQuantity) -> Result<StorageQuantity> {
@@ -246,6 +248,7 @@ impl Orderbook {
         let asks = self.get_asks_levels(levels);
 
         BookLevels {
+            exchange: self.exchange,
             symbol: self.symbol,
             bids,
             asks,

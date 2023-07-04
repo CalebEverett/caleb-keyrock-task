@@ -1,5 +1,4 @@
 use chrono::{prelude::DateTime, Utc};
-use orderbook_agg::Exchange;
 use std::time::{Duration, UNIX_EPOCH};
 use symbols::line;
 use tui::backend::Backend;

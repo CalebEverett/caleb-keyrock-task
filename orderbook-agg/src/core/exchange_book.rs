@@ -150,10 +150,15 @@ pub trait ExchangeOrderbook<
             while let Some(message) = rx_update.recv().await {
                 match message {
                     OrderbookMessage::Update(mut update) => {
-                        tracing::debug!("update last_update_id: {}", update.last_update_id());
                         let ob = ob_clone.lock().unwrap();
                         let exchange = ob.exchange;
                         let symbol = ob.symbol;
+                        tracing::debug!(
+                            "updating: {} {} {}",
+                            exchange,
+                            symbol,
+                            update.last_update_id()
+                        );
                         if let Err(err) = Self::update(ob, &mut update) {
                             tracing::error!(
                                 "failed to update orderbook: {} {} {}",

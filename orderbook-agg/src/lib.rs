@@ -24,7 +24,7 @@ impl std::fmt::Display for Symbol {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 pub enum Exchange {
     #[default]
     BINANCE,
