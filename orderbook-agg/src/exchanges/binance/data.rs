@@ -7,7 +7,7 @@ use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
 use crate::{
-    core::{num_types::DisplayPrice, orderbook::Update},
+    core::{num_types::DisplayAmount, orderbook::Update},
     Symbol,
 };
 
@@ -68,9 +68,9 @@ pub struct BookUpdate {
     #[serde(alias = "u")]
     pub last_update_id: u64,
     #[serde(alias = "b", deserialize_with = "from_str")]
-    pub bids: Vec<[DisplayPrice; 2]>,
+    pub bids: Vec<[DisplayAmount; 2]>,
     #[serde(alias = "a", deserialize_with = "from_str")]
-    pub asks: Vec<[DisplayPrice; 2]>,
+    pub asks: Vec<[DisplayAmount; 2]>,
 }
 
 impl Update for BookUpdate {
@@ -92,11 +92,11 @@ impl Update for BookUpdate {
     fn last_update_id(&self) -> u64 {
         self.last_update_id
     }
-    fn bids_mut(&mut self) -> &mut Vec<[DisplayPrice; 2]> {
+    fn bids_mut(&mut self) -> &mut Vec<[DisplayAmount; 2]> {
         &mut self.bids
     }
 
-    fn asks_mut(&mut self) -> &mut Vec<[DisplayPrice; 2]> {
+    fn asks_mut(&mut self) -> &mut Vec<[DisplayAmount; 2]> {
         &mut self.asks
     }
 }

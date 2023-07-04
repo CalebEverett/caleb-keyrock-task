@@ -1,24 +1,25 @@
-use std::ops::Deref;
+use std::{collections::HashMap, hash::Hash, ops::Deref};
 
 use anyhow::Result;
-use futures::future::try_join_all;
 use orderbook_agg::{
     core::exchange_book::ExchangeOrderbook,
-    core::orderbook::{BookLevels, OrderbookMessage},
+    core::orderbook::BookLevels,
     exchanges::{binance::BinanceOrderbook, bitstamp::BitstampOrderbook},
     Exchange, Symbol,
 };
+use tokio_stream::{wrappers::WatchStream, StreamExt, StreamMap};
 
 fn print_book_levels(book_levels: &BookLevels) {
     println!(
-        "exchange: {}, symbol, {}, best_bid: {:?}, best_ask: {:?}, spread: {:?}, bid_qty: {}, ask_qty: {}",
+        "exchange: {}, symbol, {}, best_bid: {:?}, best_ask: {:?}, spread: {:?}, bid_qty: {}, ask_qty: {}, last_update_id: {}",
         book_levels.exchange,
         book_levels.symbol,
-        book_levels.bids[0].0,
-        book_levels.asks[0].0,
-        (book_levels.asks[0].0 - book_levels.bids[0].0),
+        book_levels.bids[0][0],
+        book_levels.asks[0][0],
+        (book_levels.asks[0][0] - book_levels.bids[0][0]),
         book_levels.bids.len(),
         book_levels.asks.len(),
+        book_levels.last_update_id,
     );
 }
 
@@ -28,12 +29,9 @@ async fn start_binance(symbol: Symbol, price_range: u8, levels: u32) -> Result<(
 
     let rx_handle = tokio::spawn(async move {
         while rx_summary.changed().await.is_ok() {
-            if let OrderbookMessage::BookLevels(book_levels) = rx_summary.borrow().deref() {
-                if book_levels.bids.is_empty() || book_levels.asks.is_empty() {
-                    continue;
-                }
-                print_book_levels(book_levels);
-            }
+            if let Some(book_levels) = rx_summary.borrow().deref() {
+                print_book_levels(&book_levels);
+            };
         }
     });
     let ob_handle = tokio::spawn(async move {
@@ -49,12 +47,9 @@ async fn start_bitstamp(symbol: Symbol, price_range: u8, levels: u32) -> Result<
 
     let rx_handle = tokio::spawn(async move {
         while rx_summary.changed().await.is_ok() {
-            if let OrderbookMessage::BookLevels(book_levels) = rx_summary.borrow().deref() {
-                if book_levels.bids.is_empty() || book_levels.asks.is_empty() {
-                    continue;
-                }
-                print_book_levels(book_levels);
-            }
+            if let Some(book_levels) = rx_summary.borrow().deref() {
+                print_book_levels(&book_levels);
+            };
         }
     });
     let ob_handle = tokio::spawn(async move {
@@ -77,29 +72,42 @@ async fn main() -> Result<()> {
     let price_range = 3;
     let levels = 2;
 
-    let handles_binance = try_join_all(
-        symbols
-            .iter()
-            .map(|symbol| start_binance(*symbol, price_range, levels))
-            .collect::<Vec<_>>(),
-    );
+    let mut map = StreamMap::new();
 
-    let handles_bitstamp = try_join_all(
-        symbols
-            .iter()
-            .map(|symbol| start_bitstamp(*symbol, price_range, levels))
-            .collect::<Vec<_>>(),
-    );
+    let orderbook =
+        BitstampOrderbook::new(Exchange::BITSTAMP, Symbol::BTCUSDT, price_range).await?;
+    let rx_summary = orderbook.rx_summary();
+    map.insert(Exchange::BITSTAMP, WatchStream::new(rx_summary));
 
-    tokio::select! {
-        Err(e) = handles_binance => {
-            tracing::error!("binance error: {}", e);
+    let orderbook_handle = tokio::spawn(async move {
+        orderbook.start(levels).await.unwrap();
+    });
+
+    let orderbook1 = BinanceOrderbook::new(Exchange::BINANCE, Symbol::BTCUSDT, price_range).await?;
+    let rx_summary1 = orderbook1.rx_summary();
+    map.insert(Exchange::BINANCE, WatchStream::new(rx_summary1));
+
+    let orderbook1_handle = tokio::spawn(async move {
+        orderbook1.start(levels).await.unwrap();
+    });
+
+    let rx_handle = tokio::spawn(async move {
+        let mut summarymap = HashMap::<Exchange, BookLevels>::new();
+        while let Some((exch, Some(book_levels))) = map.next().await {
+            if book_levels.bids.is_empty() || book_levels.asks.is_empty() {
+                continue;
+            }
+            print_book_levels(&book_levels);
+            summarymap.insert(exch, book_levels);
+
+            // println!("exchange: {:?}, book_levels: {:?}", exchange, book_levels);
+            // summarymap.insert(exchange, book_levels);
         }
-        Err(e) = handles_bitstamp => {
-            tracing::error!("bitstamp error: {}", e);
-        }
-    }
+    });
 
+    orderbook_handle.await?;
+    orderbook1_handle.await?;
+    let _ = rx_handle.await?;
     tracing::info!("done");
     Ok(())
 }
