@@ -6,7 +6,7 @@ use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
 use crate::{
-    core::{num_types::DisplayAmount, orderbook::Update},
+    core::{numtypes::DisplayAmount, orderbook::Update},
     Symbol,
 };
 

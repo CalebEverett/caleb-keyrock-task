@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use crate::{
     core::{
-        exchange_book::ExchangeOrderbook,
-        num_types::DisplayAmount,
-        orderbook::{BookLevels, Orderbook, OrderbookArgs},
+        exchangebook::ExchangeOrderbook,
+        numtypes::DisplayAmount,
+        orderbook::{Orderbook, OrderbookArgs},
     },
     Exchange, Symbol,
 };
@@ -10,8 +12,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use data::{BestPrice, BookUpdate, Snapshot};
 use futures::SinkExt;
-use std::sync::{Arc, Mutex};
-use tokio::{net::TcpStream, sync::watch};
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 use self::data::ExchangeInfoBitstamp;
@@ -20,7 +22,6 @@ pub mod data;
 
 pub struct BitstampOrderbook {
     pub orderbook: Arc<Mutex<Orderbook>>,
-    pub tx_summary: Arc<Mutex<watch::Sender<Option<BookLevels>>>>,
 }
 
 #[async_trait]
@@ -29,28 +30,20 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook {
     const BASE_URL_HTTPS: &'static str = "https://www.bitstamp.net/api/v2/";
     const BASE_URL_WSS: &'static str = "wss://ws.bitstamp.net/";
 
-    async fn new(exchange: Exchange, symbol: Symbol, price_range: u8) -> Result<Self>
+    async fn new(symbol: Symbol, price_range: u8) -> Result<Self>
     where
         Self: Sized,
     {
+        let exchange = Exchange::BITSTAMP;
         let orderbook = Self::new_orderbook(exchange, symbol, price_range).await?;
-        let (tx_summary, _) = watch::channel(Some(BookLevels::default()));
         let exchange_orderbook = Self {
             orderbook: Arc::new(Mutex::new(orderbook)),
-            tx_summary: Arc::new(Mutex::new(tx_summary)),
         };
         Ok(exchange_orderbook)
     }
 
     fn orderbook(&self) -> Arc<Mutex<Orderbook>> {
         self.orderbook.clone()
-    }
-    fn tx_summary(&self) -> Arc<Mutex<watch::Sender<Option<BookLevels>>>> {
-        self.tx_summary.clone()
-    }
-
-    fn rx_summary(&self) -> watch::Receiver<Option<BookLevels>> {
-        self.tx_summary.clone().lock().unwrap().subscribe()
     }
 
     async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderbookArgs> {
@@ -85,7 +78,7 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook {
         let symbol = self
             .orderbook()
             .lock()
-            .unwrap()
+            .await
             .symbol
             .to_string()
             .to_lowercase();
@@ -97,7 +90,7 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook {
         let symbol = self
             .orderbook()
             .lock()
-            .unwrap()
+            .await
             .symbol
             .to_string()
             .to_lowercase();
