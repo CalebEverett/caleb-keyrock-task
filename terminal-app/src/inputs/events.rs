@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use log::error;
 use orderbook_agg::booksummary::orderbook_aggregator_client::OrderbookAggregatorClient;
-use orderbook_agg::booksummary::SummaryRequest;
+use orderbook_agg::booksummary::{Empty, SummaryRequest};
 use tokio_stream::StreamExt;
 
 use super::key::Key;
@@ -25,7 +25,7 @@ impl Events {
     pub fn new(
         tick_rate: Duration,
         mut client: OrderbookAggregatorClient<tonic::transport::Channel>,
-        summary_request: SummaryRequest,
+        _: SummaryRequest,
     ) -> Events {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let stop_capture = Arc::new(AtomicBool::new(false));
@@ -35,7 +35,7 @@ impl Events {
         let event_stop_capture = stop_capture.clone();
 
         tokio::spawn(async move {
-            let request = tonic::Request::new(summary_request);
+            let request = tonic::Request::new(Empty {});
             let mut stream = client.watch_summary(request).await.unwrap().into_inner();
             loop {
                 if let Some(summary) = stream.next().await {

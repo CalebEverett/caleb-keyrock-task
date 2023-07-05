@@ -3,19 +3,13 @@ syntax = "proto3";
 package booksummary;
 
 service OrderbookAggregator {
-  rpc GetSummary(SummaryRequest) returns (Summary);
-  rpc WatchSummary(SummaryRequest) returns (stream Summary);
-  rpc GetSymbols(Empty) returns (Symbols);
+  rpc WatchSummary(Empty) returns (stream Summary);
+  rpc GetLevels(Empty) returns (stream Level);
 }
 
 message Empty {}
 
-message SummaryRequest {
-  string symbol = 1;
-  uint32 levels = 2;
-  double price_range = 3;
-  uint32 decimals = 5;
-}
+message SummaryRequest { string symbol = 1; }
 
 message Symbols { repeated string symbols = 1; }
 

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 use tokio::{
     net::TcpStream,
-    sync::{mpsc, watch},
+    sync::{mpsc, Mutex},
     task::JoinHandle,
 };
 use tokio_stream::StreamExt;
@@ -11,7 +11,7 @@ use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use url::Url;
 
 use super::orderbook::{BookLevels, Orderbook, OrderbookArgs, Update};
-use crate::{core::num_types::*, Exchange, Symbol};
+use crate::{core::numtypes::*, Exchange, Symbol};
 
 #[async_trait]
 pub trait ExchangeOrderbook<
@@ -36,10 +36,9 @@ pub trait ExchangeOrderbook<
     fn base_url_wss() -> Url {
         Url::parse(&Self::BASE_URL_WSS).unwrap()
     }
-    fn tx_summary(&self) -> Arc<Mutex<watch::Sender<Option<BookLevels>>>>;
-    fn rx_summary(&self) -> watch::Receiver<Option<BookLevels>>;
+    // fn tx_levels(&self) -> Arc<Mutex<watch::Sender<Option<BookLevels>>>>;
 
-    async fn new(exchange: Exchange, symbol: Symbol, price_range: u8) -> Result<Self>
+    async fn new(symbol: Symbol, price_range: u8) -> Result<Self>
     where
         Self: Sized;
     async fn new_orderbook(exchange: Exchange, symbol: Symbol, price_range: u8) -> Result<Orderbook>
@@ -84,29 +83,9 @@ pub trait ExchangeOrderbook<
 
     /// Fetches the update stream from the exchange
     async fn fetch_update_stream(&self) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>>;
-    fn update(mut ob: MutexGuard<Orderbook>, update: &mut U) -> Result<()> {
-        tracing::debug!("update {:#?}", update);
 
-        update.validate(ob.last_update_id)?;
-
-        // this is set up this way to be able to consume the update without copying it
-        for bid in update.bids_mut().into_iter() {
-            tracing::debug!("adding bid: {:?}", bid);
-            ob.add_bid(*bid)?
-        }
-        for ask in update.asks_mut().into_iter() {
-            tracing::debug!("adding ask: {:?}", ask);
-            ob.add_ask(*ask)?
-        }
-
-        ob.last_update_id = update.last_update_id();
-
-        Ok(())
-    }
-    async fn start(&self, levels: u32) -> Result<()> {
+    async fn start(&self, levels: u32, tx_summary: mpsc::Sender<BookLevels>) -> Result<()> {
         let (tx_update, mut rx_update) = mpsc::channel::<U>(100);
-        let ob_clone = self.orderbook().clone();
-        let tx_summary = self.tx_summary().clone();
 
         let mut stream = self.fetch_update_stream().await?;
         let snapshot = self.fetch_snapshot().await?;
@@ -145,35 +124,31 @@ pub trait ExchangeOrderbook<
                 Ok(())
             });
 
-        let updater: JoinHandle<()> = tokio::spawn(async move {
-            while let Some(mut update) = rx_update.recv().await {
-                let mut ob = ob_clone.lock().unwrap();
-                let exchange = ob.exchange;
-                let symbol = ob.symbol;
-                tracing::debug!(
-                    "updating: {} {} {}",
+        let orderbook = self.orderbook();
+        while let Some(mut update) = rx_update.recv().await {
+            let mut ob = orderbook.lock().await;
+            let exchange = ob.exchange;
+            let symbol = ob.symbol;
+            tracing::debug!(
+                "updating: {} {} {}",
+                exchange,
+                symbol,
+                update.last_update_id()
+            );
+            if let Err(err) = ob.update(&mut update) {
+                tracing::error!(
+                    "failed to update orderbook: {} {} {}",
                     exchange,
                     symbol,
-                    update.last_update_id()
+                    err
                 );
-                if let Err(err) = Self::update(ob, &mut update) {
-                    tracing::error!(
-                        "failed to update orderbook: {} {} {}",
-                        exchange,
-                        symbol,
-                        err
-                    );
-                } else {
-                    ob = ob_clone.lock().unwrap();
-                    if !ob.bids.is_empty() || !ob.asks.is_empty() {
-                        let book_levels = ob.get_book_levels(levels);
-                        let _ = tx_summary.lock().unwrap().send_replace(book_levels);
-                    }
+            } else {
+                if let Some(book_levels) = ob.get_book_levels(levels) {
+                    tx_summary.send(book_levels.clone()).await.unwrap();
                 }
             }
-        });
+        }
 
-        updater.await?;
         let _ = fetcher.await?;
         Ok(())
     }

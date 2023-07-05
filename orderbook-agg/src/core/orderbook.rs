@@ -1,8 +1,9 @@
 use anyhow::Result;
+use num_traits::ToPrimitive;
 use rust_decimal::Decimal;
 use tracing::instrument;
 
-use crate::{core::num_types::*, Exchange, Symbol};
+use crate::{booksummary::Level, core::numtypes::*, Exchange, Symbol};
 
 #[derive(Debug)]
 pub enum OrderbookMessage<U> {
@@ -15,8 +16,8 @@ pub struct BookLevels {
     pub exchange: Exchange,
     pub symbol: Symbol,
     pub last_update_id: u64,
-    pub bids: Vec<[DisplayAmount; 2]>,
-    pub asks: Vec<[DisplayAmount; 2]>,
+    pub bids: Vec<Level>,
+    pub asks: Vec<Level>,
 }
 
 /// Updates from all exchanges should implement this trait
@@ -113,6 +114,23 @@ impl Orderbook {
     fn storage_quantity(&self, quantity: DisplayAmount) -> Result<StorageAmount> {
         quantity.to_storage(self.scale_quantity)
     }
+    fn storage_level_to_display_level(&self, storage_level: [StorageAmount; 2]) -> Result<Level> {
+        let price = (self.display_price(storage_level[0])?.to_f64().unwrap()
+            * 10u32.pow(self.scale_price) as f64)
+            .round()
+            / 10u32.pow(self.scale_price) as f64;
+        let quantity = (self.display_quantity(storage_level[1])?.to_f64().unwrap()
+            * 10u32.pow(self.scale_quantity) as f64)
+            .round()
+            / 10u32.pow(self.scale_quantity) as f64;
+        let level = Level {
+            exchange: self.exchange.to_string(),
+            price,
+            quantity,
+        };
+
+        Ok(level)
+    }
     fn bids(&self) -> &Vec<StorageAmount> {
         &self.bids
     }
@@ -204,20 +222,18 @@ impl Orderbook {
         }
         Ok(())
     }
-    pub fn get_bids_levels(&self, mut levels: u32) -> Result<Vec<[DisplayAmount; 2]>> {
+    pub fn get_bids_levels(&self, mut levels: u32) -> Result<Vec<Level>> {
         let bids = self.bids();
         let summary_bids = if bids.is_empty() {
             Vec::new()
         } else {
             let mut bid_max = self.storage_bid_max;
-            let mut summary_bids = Vec::<[DisplayAmount; 2]>::with_capacity(levels as usize);
+            let mut summary_bids = Vec::<Level>::with_capacity(levels as usize);
             while levels > 0 && bid_max >= self.storage_price_min {
                 let idx = self.idx(bid_max);
                 if bids[idx] > 0 {
-                    summary_bids.push([
-                        self.display_price(bid_max)?,
-                        self.display_quantity(bids[idx])?,
-                    ]);
+                    let level = self.storage_level_to_display_level([bid_max, bids[idx]])?;
+                    summary_bids.push(level);
                     levels -= 1;
                 }
                 bid_max -= 1;
@@ -226,20 +242,18 @@ impl Orderbook {
         };
         Ok(summary_bids)
     }
-    pub fn get_asks_levels(&self, mut levels: u32) -> Result<Vec<[DisplayAmount; 2]>> {
+    pub fn get_asks_levels(&self, mut levels: u32) -> Result<Vec<Level>> {
         let asks = self.asks();
         let summary_asks = if asks.is_empty() {
             Vec::new()
         } else {
             let mut ask_min = self.storage_ask_min;
-            let mut summary_asks = Vec::<[DisplayAmount; 2]>::with_capacity(levels as usize);
+            let mut summary_asks = Vec::<Level>::with_capacity(levels as usize);
             while levels > 0 && ask_min <= self.storage_price_max {
                 let idx = self.idx(ask_min);
                 if asks[idx] > 0 {
-                    summary_asks.push([
-                        self.display_price(ask_min)?,
-                        self.display_quantity(asks[idx])?,
-                    ]);
+                    let level = self.storage_level_to_display_level([ask_min, asks[idx]])?;
+                    summary_asks.push(level);
                     levels -= 1;
                 }
                 ask_min += 1;
@@ -263,6 +277,25 @@ impl Orderbook {
                 asks,
             })
         }
+    }
+    pub fn update<U: Update + std::fmt::Debug>(&mut self, update: &mut U) -> Result<()> {
+        tracing::debug!("update {:#?}", update);
+
+        update.validate(self.last_update_id)?;
+
+        // this is set up this way to be able to consume the update without copying it
+        for bid in update.bids_mut().into_iter() {
+            tracing::debug!("adding bid: {:?}", bid);
+            self.add_bid(*bid)?
+        }
+        for ask in update.asks_mut().into_iter() {
+            tracing::debug!("adding ask: {:?}", ask);
+            self.add_ask(*ask)?
+        }
+
+        self.last_update_id = update.last_update_id();
+
+        Ok(())
     }
 }
 
@@ -339,8 +372,5 @@ mod tests {
             1
         );
         assert_eq!(ob.display_quantity(1).unwrap().to_string(), "0.00000001");
-
-        let test_num = Decimal::from_i128_with_scale(u32::MAX as i128, 8);
-        let float_num = test_num;
     }
 }

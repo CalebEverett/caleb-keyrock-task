@@ -44,9 +44,6 @@ async fn main() -> Result<()> {
     let opts = SummaryOptions::parse();
     let summary_request = SummaryRequest {
         symbol: opts.symbol,
-        levels: opts.levels.unwrap_or(15),
-        price_range: opts.price_range.unwrap_or(5.),
-        decimals: opts.decimals.unwrap_or(2),
     };
 
     start_ui(&app_ui, summary_request).await?;

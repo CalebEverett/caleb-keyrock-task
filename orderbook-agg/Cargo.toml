@@ -5,9 +5,25 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# client binary
+[[bin]]
+    name = "client"
+    path = "src/client.rs"
+
+# server binary
+[[bin]]
+    name = "server"
+    path = "src/server.rs"
+
+# main binary
+[[bin]]
+    name = "main"
+    path = "src/main.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+clap = { workspace = true }
 chrono = {workspace = true }
 futures = {workspace = true }
 prost = {workspace = true }
