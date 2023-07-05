@@ -12,7 +12,6 @@ struct Options {
 
 #[derive(Debug, Parser)]
 enum Command {
-    GetLevels,
     WatchSummary,
 }
 
@@ -20,26 +19,6 @@ enum Command {
 struct SummaryOptions {
     #[clap(long)]
     symbol: String,
-}
-
-/// Streams a summary of the aggregatge orderbook for a given symbol, updated for changes from all exchanges.
-async fn watch_levels(
-    mut client: OrderbookAggregatorClient<tonic::transport::Channel>,
-) -> Result<()> {
-    let request = tonic::Request::new(Empty {});
-
-    let mut stream = client.get_levels(request).await?.into_inner();
-    while let Some(level) = stream.next().await {
-        match level {
-            Ok(level) => println!("\n{:#?}", level),
-            Err(err) => {
-                return Err(err.into());
-            }
-        };
-    }
-    println!("stream closed");
-
-    Ok(())
 }
 
 async fn watch_summary(
@@ -68,7 +47,6 @@ async fn main() -> Result<()> {
 
     use Command::*;
     match opts.command {
-        GetLevels => watch_levels(client).await?,
         WatchSummary => watch_summary(client).await?,
     };
 

@@ -4,7 +4,6 @@ package booksummary;
 
 service OrderbookAggregator {
   rpc WatchSummary(Empty) returns (stream Summary);
-  rpc GetLevels(Empty) returns (stream Level);
 }
 
 message Empty {}
