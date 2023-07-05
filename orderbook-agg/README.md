@@ -1,3 +1,3 @@
 # orderbook-agg [WIP]
 
-Creates a gRPC server that streams an order book summary aggregated from multiple exchanges.
+gRPC server that streams aggregate orderbook data from multiple exchanges.

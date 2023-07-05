@@ -27,7 +27,7 @@ async fn start_symbol(
     let (tx2, mut rx2) =
         mpsc::channel::<oneshot::Sender<watch::Receiver<Result<Summary, Status>>>>(100);
 
-    // Start the orderbooks for each of the exchanges
+    // Create orderbooks for each of the exchanges
     let ob_bs = BitstampOrderbook::new(symbol, price_range).await.unwrap();
     let ob_bn = BinanceOrderbook::new(symbol, price_range).await.unwrap();
 
@@ -35,6 +35,8 @@ async fn start_symbol(
     // The receiver stays here to be used in the select loop below to create summaries from the book levels.
     let (tx3, mut rx3) = mpsc::channel::<BookLevels>(100);
     let tx4 = tx3.clone();
+
+    // Start the order books.
     tokio::spawn(async move {
         ob_bs.start(levels, tx3).await.unwrap();
     });
@@ -69,8 +71,8 @@ async fn start_symbol(
                             continue;
                         }
 
-                        // Book levels are stored in the the hashmap above and a new summary created from both every
-                        // every time an update is received from either exchange.
+                        // Book levels are stored in the hashmap above and a new summary created from both exchanges
+                        // every time an update is received from either.
                         let current_levels = levels_map.values().map(|v| v.clone()).collect::<Vec<BookLevels>>();
                         let summary = make_summary(current_levels, symbol);
 

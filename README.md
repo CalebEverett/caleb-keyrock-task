@@ -7,10 +7,10 @@ This repo consists of two crates:
 
 ## orderbook-agg
 
-A gRPC server that aggregates orderbook data from multiple exchanges and a client library for interacting with the server.
+gRPC server that streams aggregate orderbook data from multiple exchanges.
 
 ## terminal-app
 
-A simple terminal app that allows you to display a streaming summary of an aggregate orderbook and spread history.
+Simple terminal app that displays streaming summary of aggregate orderbook.
 
 ![teminal app screen](./terminal-app/screen.png)
