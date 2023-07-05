@@ -160,15 +160,6 @@ impl ExchangeInfoBitstamp {
     pub async fn fetch(url: Url, symbol: &Symbol) -> Result<Self> {
         let endpoint = url.join("trading-pairs-info").unwrap();
 
-        // let symbols = reqwest::get(endpoint.clone())
-        //     .await
-        //     .context("Failed to get exchange info")?
-        //     .text()
-        //     .await
-        //     .context("Failed to deserialize exchange info to json")?;
-
-        // println!("{}", symbols);
-
         let symbols = reqwest::get(endpoint)
             .await
             .context("Failed to get exchange info")?

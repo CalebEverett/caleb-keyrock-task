@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, ops::Deref};
+use std::{collections::HashMap, ops::Deref};
 
 use anyhow::Result;
 use orderbook_agg::{
@@ -11,7 +11,7 @@ use tokio_stream::{wrappers::WatchStream, StreamExt, StreamMap};
 
 fn print_book_levels(book_levels: &BookLevels) {
     println!(
-        "exchange: {}, symbol, {}, best_bid: {:?}, best_ask: {:?}, spread: {:?}, bid_qty: {}, ask_qty: {}, last_update_id: {}",
+        "exchange: {}, symbol, {}, best_bid: {:?}, best_ask: {:?}, spread: {:?}, bid_qty: {}, ask_qty: {}, last_update_id: {}, bid_levels: {:?}, ask_levels: {:?}",
         book_levels.exchange,
         book_levels.symbol,
         book_levels.bids[0][0],
@@ -20,6 +20,8 @@ fn print_book_levels(book_levels: &BookLevels) {
         book_levels.bids.len(),
         book_levels.asks.len(),
         book_levels.last_update_id,
+        book_levels.bids,
+        book_levels.asks,
     );
 }
 
@@ -97,8 +99,26 @@ async fn main() -> Result<()> {
             if book_levels.bids.is_empty() || book_levels.asks.is_empty() {
                 continue;
             }
-            print_book_levels(&book_levels);
+
             summarymap.insert(exch, book_levels);
+
+            let mut bids = Vec::new();
+            let mut asks = Vec::new();
+            for (_, bl) in summarymap.iter() {
+                bids.append(&mut bl.bids.clone());
+                asks.append(&mut bl.asks.clone());
+            }
+            bids.sort_by(|a, b| b[0].partial_cmp(&a[0]).unwrap());
+            asks.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+            let lup = summarymap.get(&exch).unwrap().last_update_id;
+            let nb = BookLevels {
+                exchange: exch,
+                symbol: Symbol::BTCUSDT,
+                bids,
+                asks,
+                last_update_id: lup,
+            };
+            print_book_levels(&nb);
 
             // println!("exchange: {:?}, book_levels: {:?}", exchange, book_levels);
             // summarymap.insert(exchange, book_levels);

@@ -15,8 +15,8 @@ pub struct BookLevels {
     pub exchange: Exchange,
     pub symbol: Symbol,
     pub last_update_id: u64,
-    pub bids: Vec<[StorageAmount; 2]>,
-    pub asks: Vec<[StorageAmount; 2]>,
+    pub bids: Vec<[DisplayAmount; 2]>,
+    pub asks: Vec<[DisplayAmount; 2]>,
 }
 
 /// Updates from all exchanges should implement this trait
@@ -108,7 +108,7 @@ impl Orderbook {
         price.to_storage(self.scale_price)
     }
     pub fn display_quantity(&self, quantity: StorageAmount) -> Result<DisplayAmount> {
-        quantity.to_display(self.scale_price)
+        quantity.to_display(self.scale_quantity)
     }
     fn storage_quantity(&self, quantity: DisplayAmount) -> Result<StorageAmount> {
         quantity.to_storage(self.scale_quantity)
@@ -204,47 +204,54 @@ impl Orderbook {
         }
         Ok(())
     }
-    pub fn get_bids_levels(&self, mut levels: u32) -> Vec<[StorageAmount; 2]> {
+    pub fn get_bids_levels(&self, mut levels: u32) -> Result<Vec<[DisplayAmount; 2]>> {
         let bids = self.bids();
         let summary_bids = if bids.is_empty() {
             Vec::new()
         } else {
             let mut bid_max = self.storage_bid_max;
-            let mut summary_bids = Vec::<[StorageAmount; 2]>::with_capacity(levels as usize);
+            let mut summary_bids = Vec::<[DisplayAmount; 2]>::with_capacity(levels as usize);
             while levels > 0 && bid_max >= self.storage_price_min {
                 let idx = self.idx(bid_max);
                 if bids[idx] > 0 {
-                    summary_bids.push([bid_max, bids[idx]]);
+                    summary_bids.push([
+                        self.display_price(bid_max)?,
+                        self.display_quantity(bids[idx])?,
+                    ]);
                     levels -= 1;
                 }
                 bid_max -= 1;
             }
             summary_bids
         };
-        summary_bids
+        Ok(summary_bids)
     }
-    pub fn get_asks_levels(&self, mut levels: u32) -> Vec<[StorageAmount; 2]> {
+    pub fn get_asks_levels(&self, mut levels: u32) -> Result<Vec<[DisplayAmount; 2]>> {
         let asks = self.asks();
         let summary_asks = if asks.is_empty() {
             Vec::new()
         } else {
             let mut ask_min = self.storage_ask_min;
-            let mut summary_asks = Vec::<[StorageAmount; 2]>::with_capacity(levels as usize);
+            let mut summary_asks = Vec::<[DisplayAmount; 2]>::with_capacity(levels as usize);
             while levels > 0 && ask_min <= self.storage_price_max {
                 let idx = self.idx(ask_min);
                 if asks[idx] > 0 {
-                    summary_asks.push([ask_min, asks[idx]]);
+                    summary_asks.push([
+                        self.display_price(ask_min)?,
+                        self.display_quantity(asks[idx])?,
+                    ]);
                     levels -= 1;
                 }
                 ask_min += 1;
             }
             summary_asks
         };
-        summary_asks
+        Ok(summary_asks)
     }
     pub fn get_book_levels(&self, levels: u32) -> Option<BookLevels> {
-        let bids = self.get_bids_levels(levels);
-        let asks = self.get_asks_levels(levels);
+        // levels come out here with the best bid and ask at the end of the vector
+        let bids = self.get_bids_levels(levels).ok()?;
+        let asks = self.get_asks_levels(levels).ok()?;
         if bids.is_empty() && asks.is_empty() {
             None
         } else {
@@ -332,5 +339,8 @@ mod tests {
             1
         );
         assert_eq!(ob.display_quantity(1).unwrap().to_string(), "0.00000001");
+
+        let test_num = Decimal::from_i128_with_scale(u32::MAX as i128, 8);
+        let float_num = test_num;
     }
 }
