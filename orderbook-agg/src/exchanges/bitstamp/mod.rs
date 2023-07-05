@@ -1,8 +1,8 @@
 use crate::{
     core::{
         exchange_book::ExchangeOrderbook,
-        num_types::DisplayPrice,
-        orderbook::{BookLevels, Orderbook, OrderbookArgs, OrderbookMessage},
+        num_types::DisplayAmount,
+        orderbook::{BookLevels, Orderbook, OrderbookArgs},
     },
     Exchange, Symbol,
 };
@@ -18,13 +18,13 @@ use self::data::ExchangeInfoBitstamp;
 
 pub mod data;
 
-pub struct BitstampOrderbook<U> {
+pub struct BitstampOrderbook {
     pub orderbook: Arc<Mutex<Orderbook>>,
-    pub tx_summary: Arc<Mutex<watch::Sender<OrderbookMessage<U>>>>,
+    pub tx_summary: Arc<Mutex<watch::Sender<Option<BookLevels>>>>,
 }
 
 #[async_trait]
-impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook<BookUpdate> {
+impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook {
     // make sure these have trailing slashes
     const BASE_URL_HTTPS: &'static str = "https://www.bitstamp.net/api/v2/";
     const BASE_URL_WSS: &'static str = "wss://ws.bitstamp.net/";
@@ -34,7 +34,7 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook<BookUpdate> {
         Self: Sized,
     {
         let orderbook = Self::new_orderbook(exchange, symbol, price_range).await?;
-        let (tx_summary, _) = watch::channel(OrderbookMessage::BookLevels(BookLevels::default()));
+        let (tx_summary, _) = watch::channel(Some(BookLevels::default()));
         let exchange_orderbook = Self {
             orderbook: Arc::new(Mutex::new(orderbook)),
             tx_summary: Arc::new(Mutex::new(tx_summary)),
@@ -45,11 +45,11 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook<BookUpdate> {
     fn orderbook(&self) -> Arc<Mutex<Orderbook>> {
         self.orderbook.clone()
     }
-    fn tx_summary(&self) -> Arc<Mutex<watch::Sender<OrderbookMessage<BookUpdate>>>> {
+    fn tx_summary(&self) -> Arc<Mutex<watch::Sender<Option<BookLevels>>>> {
         self.tx_summary.clone()
     }
 
-    fn rx_summary(&self) -> watch::Receiver<OrderbookMessage<BookUpdate>> {
+    fn rx_summary(&self) -> watch::Receiver<Option<BookLevels>> {
         self.tx_summary.clone().lock().unwrap().subscribe()
     }
 
@@ -74,7 +74,7 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook<BookUpdate> {
         Ok(args)
     }
 
-    async fn fetch_prices(symbol: &Symbol) -> Result<(DisplayPrice, DisplayPrice)> {
+    async fn fetch_prices(symbol: &Symbol) -> Result<(DisplayAmount, DisplayAmount)> {
         let url = Self::base_url_https()
             .join(format!("ticker/{}", symbol.to_string().to_lowercase()).as_str())?;
         let price = BestPrice::fetch(url).await?;
