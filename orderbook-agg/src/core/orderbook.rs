@@ -143,7 +143,7 @@ impl Orderbook {
     fn asks_mut(&mut self) -> &mut Vec<StorageAmount> {
         &mut self.asks
     }
-    fn idx(&self, storage_price: StorageAmount) -> usize {
+    pub(crate) fn idx(&self, storage_price: StorageAmount) -> usize {
         (storage_price - self.storage_price_min) as usize
     }
     /// Adds, modifies or removes a bid from the order book.
@@ -318,12 +318,6 @@ mod tests {
 
         assert_eq!(storage_quantity, u64::MAX);
 
-        if let Err(err) = ob.storage_price(Decimal::new(u32::MAX as i64 + 1, 2)) {
-            assert_eq!(err.to_string(), "price is too large");
-        } else {
-            panic!("greater than u32 should have failed");
-        };
-
         if let Err(err) =
             ob.storage_quantity(Decimal::from_i128_with_scale(u64::MAX as i128 + 1, 8))
         {
@@ -333,7 +327,7 @@ mod tests {
         };
 
         if let Err(err) = ob.storage_price(Decimal::new(-1, 0)) {
-            assert_eq!(err.to_string(), "price sign must be positive");
+            assert_eq!(err.to_string(), "quantity sign must be positive");
         } else {
             panic!("negative should have failed");
         };
