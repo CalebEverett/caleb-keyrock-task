@@ -7,3 +7,4 @@ gRPC server that streams aggregate orderbook data from multiple exchanges. Order
 3. Include tests to ensure summary is being calculated currectly, especially the spread.
 4. Maintain one summary stream and make sure server can accomodate multiple requests to receive streaming uodates.
 5. Use the precision data provided by the exchange APIs for each currency for both base and quote assets.
+6. Don't change the proto file - consider this as an established internal API.
