@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use log::{error, info};
-use orderbook_agg::booksummary::Summary;
+use orderbook_agg::book_summary::Summary;
 
 use super::IoEvent;
 use crate::app::App;

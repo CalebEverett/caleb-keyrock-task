@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use orderbook_agg::booksummary::Summary;
+use orderbook_agg::book_summary::Summary;
 
 pub mod handler;
 // For this dummy application we only need two IO event

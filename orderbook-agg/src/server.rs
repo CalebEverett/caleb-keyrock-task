@@ -1,12 +1,12 @@
 use anyhow::Result;
 use futures::Stream;
 use orderbook_agg::{
-    booksummary::{
+    book_summary::{
         orderbook_aggregator_server::{OrderbookAggregator, OrderbookAggregatorServer},
         Empty, Summary,
     },
-    core::{exchangebook::ExchangeOrderbook, orderbook::BookLevels},
-    exchanges::{binance::BinanceOrderbook, bitstamp::BitstampOrderbook},
+    core::{exchange_book::ExchangeBook, order_book::BookLevels},
+    exchanges::{binance::BinanceOrderBook, bitstamp::BitstampOrderBook},
     make_summary, Exchange, Symbol,
 };
 use std::{collections::HashMap, pin::Pin};
@@ -28,8 +28,8 @@ async fn start_symbol(
         mpsc::channel::<oneshot::Sender<watch::Receiver<Result<Summary, Status>>>>(100);
 
     // Create orderbooks for each of the exchanges
-    let ob_bs = BitstampOrderbook::new(symbol, price_range).await.unwrap();
-    let ob_bn = BinanceOrderbook::new(symbol, price_range).await.unwrap();
+    let ob_bs = BitstampOrderBook::new(symbol, price_range).await.unwrap();
+    let ob_bn = BinanceOrderBook::new(symbol, price_range).await.unwrap();
 
     // Tx3 and tx4 go into each of the order books to send back the book levels.
     // The receiver stays here to be used in the select loop below to create summaries from the book levels.

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use crate::{
     core::{
-        exchangebook::ExchangeOrderbook,
-        numtypes::DisplayAmount,
-        orderbook::{Orderbook, OrderbookArgs},
+        exchange_book::ExchangeBook,
+        num_types::DisplayAmount,
+        order_book::{OrderBook, OrderBookArgs},
     },
     Exchange, Symbol,
 };
@@ -18,12 +18,12 @@ use self::data::{BestPrice, BookUpdate, ExchangeInfoBinance, Snapshot};
 
 pub mod data;
 
-pub struct BinanceOrderbook {
-    pub orderbook: Arc<Mutex<Orderbook>>,
+pub struct BinanceOrderBook {
+    pub orderbook: Arc<Mutex<OrderBook>>,
 }
 
 #[async_trait]
-impl ExchangeOrderbook<Snapshot, BookUpdate> for BinanceOrderbook {
+impl ExchangeBook<Snapshot, BookUpdate> for BinanceOrderBook {
     // make sure these have trailing slashes
     const BASE_URL_HTTPS: &'static str = "https://www.binance.us/api/v3/";
     const BASE_URL_WSS: &'static str = "wss://stream.binance.us:9443/ws/";
@@ -40,20 +40,20 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BinanceOrderbook {
         Ok(exchange_orderbook)
     }
 
-    fn orderbook(&self) -> Arc<Mutex<Orderbook>> {
+    fn orderbook(&self) -> Arc<Mutex<OrderBook>> {
         self.orderbook.clone()
     }
 
-    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderbookArgs> {
+    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderBookArgs> {
         let (best_price, _) = Self::fetch_prices(symbol).await?;
 
         println!("base_url_https: {}", Self::base_url_https());
         let (scale_price, scale_quantity) =
             ExchangeInfoBinance::fetch_scales(Self::base_url_https(), symbol).await?;
         let (storage_price_min, storage_price_max) =
-            OrderbookArgs::get_min_max(best_price, price_range, scale_price)?;
+            OrderBookArgs::get_min_max(best_price, price_range, scale_price)?;
 
-        let args = OrderbookArgs {
+        let args = OrderBookArgs {
             storage_price_min,
             storage_price_max,
             scale_price,
