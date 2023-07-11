@@ -3,10 +3,10 @@ use num_traits::ToPrimitive;
 use rust_decimal::Decimal;
 use tracing::instrument;
 
-use crate::{booksummary::Level, core::numtypes::*, Exchange, Symbol};
+use crate::{book_summary::Level, core::num_types::*, Exchange, Symbol};
 
 #[derive(Debug)]
-pub enum OrderbookMessage<U> {
+pub enum OrderBookMessage<U> {
     Update(U),
     Levels(BookLevels),
 }
@@ -29,14 +29,14 @@ pub trait Update {
 }
 
 #[derive(Debug, Default)]
-pub struct OrderbookArgs {
+pub struct OrderBookArgs {
     pub storage_price_min: StorageAmount,
     pub storage_price_max: StorageAmount,
     pub scale_price: u32,
     pub scale_quantity: u32,
 }
 
-impl OrderbookArgs {
+impl OrderBookArgs {
     #[instrument]
     pub(crate) fn get_min_max(
         price: DisplayAmount,
@@ -54,7 +54,7 @@ impl OrderbookArgs {
 }
 
 #[derive(Debug)]
-pub struct Orderbook {
+pub struct OrderBook {
     pub exchange: Exchange,
     pub symbol: Symbol,
     pub storage_ask_min: StorageAmount,
@@ -68,7 +68,7 @@ pub struct Orderbook {
     pub last_update_id: u64,
 }
 
-impl Orderbook {
+impl OrderBook {
     #[instrument]
     pub fn new(
         exchange: Exchange,
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn it_converts_numbers_correctly() {
-        let ob = Orderbook::new(Exchange::BINANCE, Symbol::BTCUSDT, 700, 4200, 2, 8);
+        let ob = OrderBook::new(Exchange::BINANCE, Symbol::BTCUSDT, 700, 4200, 2, 8);
 
         let display_price = ob.display_price(4200).unwrap();
         assert_eq!(display_price.to_string(), "42.00");
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn it_converts_extreme_numbers_correctly() {
-        let ob = Orderbook::new(Exchange::BINANCE, Symbol::BTCUSDT, 1, 42, 8, 8);
+        let ob = OrderBook::new(Exchange::BINANCE, Symbol::BTCUSDT, 1, 42, 8, 8);
 
         assert_eq!(
             ob.storage_price(ob.display_price(ob.storage_price_min).unwrap())

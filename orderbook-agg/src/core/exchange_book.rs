@@ -10,11 +10,11 @@ use tokio_stream::StreamExt;
 use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use url::Url;
 
-use super::orderbook::{BookLevels, Orderbook, OrderbookArgs, Update};
-use crate::{core::numtypes::*, Exchange, Symbol};
+use super::order_book::{BookLevels, OrderBook, OrderBookArgs, Update};
+use crate::{core::num_types::*, Exchange, Symbol};
 
 #[async_trait]
-pub trait ExchangeOrderbook<
+pub trait ExchangeBook<
     S: Update + Send,
     U: std::fmt::Debug
         + Update
@@ -29,7 +29,7 @@ pub trait ExchangeOrderbook<
     const BASE_URL_HTTPS: &'static str;
     const BASE_URL_WSS: &'static str;
 
-    fn orderbook(&self) -> Arc<Mutex<Orderbook>>;
+    fn orderbook(&self) -> Arc<Mutex<OrderBook>>;
     fn base_url_https() -> Url {
         Url::parse(&Self::BASE_URL_HTTPS).unwrap()
     }
@@ -41,18 +41,18 @@ pub trait ExchangeOrderbook<
     async fn new(symbol: Symbol, price_range: u8) -> Result<Self>
     where
         Self: Sized;
-    async fn new_orderbook(exchange: Exchange, symbol: Symbol, price_range: u8) -> Result<Orderbook>
+    async fn new_orderbook(exchange: Exchange, symbol: Symbol, price_range: u8) -> Result<OrderBook>
     where
         Self: Sized,
     {
-        let OrderbookArgs {
+        let OrderBookArgs {
             storage_price_min,
             storage_price_max,
             scale_price,
             scale_quantity,
         } = Self::fetch_orderbook_args(&symbol, price_range).await?;
 
-        let orderbook = Orderbook::new(
+        let orderbook = OrderBook::new(
             exchange,
             symbol,
             storage_price_min,
@@ -76,7 +76,7 @@ pub trait ExchangeOrderbook<
     async fn fetch_prices(symbol: &Symbol) -> Result<(DisplayAmount, DisplayAmount)>;
 
     /// Fetches precious data from the exchange
-    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderbookArgs>;
+    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderBookArgs>;
 
     /// Fetches the initial snapshot from the exchange
     async fn fetch_snapshot(&self) -> Result<S>;

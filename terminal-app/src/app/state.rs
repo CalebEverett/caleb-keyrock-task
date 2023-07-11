@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::time::Duration;
 
-use orderbook_agg::booksummary::Summary;
+use orderbook_agg::book_summary::Summary;
 
 #[derive(Clone)]
 pub enum AppState {

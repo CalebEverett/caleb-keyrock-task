@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use tokio_stream::StreamExt;
 
-use orderbook_agg::booksummary::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty};
+use orderbook_agg::book_summary::{orderbook_aggregator_client::OrderbookAggregatorClient, Empty};
 
 #[derive(Debug, Parser)]
 struct Options {

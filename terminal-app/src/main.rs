@@ -1,5 +1,5 @@
 use clap::Parser;
-use orderbook_agg::booksummary::SummaryRequest;
+use orderbook_agg::book_summary::SummaryRequest;
 use std::sync::Arc;
 
 use anyhow::Result;

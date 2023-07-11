@@ -6,7 +6,7 @@ use self::state::AppState;
 use crate::app::actions::Action;
 use crate::inputs::key::Key;
 use crate::io::IoEvent;
-use orderbook_agg::booksummary::Summary;
+use orderbook_agg::book_summary::Summary;
 
 pub mod actions;
 pub mod state;

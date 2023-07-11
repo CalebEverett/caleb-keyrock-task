@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use crate::{
     core::{
-        exchangebook::ExchangeOrderbook,
-        numtypes::DisplayAmount,
-        orderbook::{Orderbook, OrderbookArgs},
+        exchange_book::ExchangeBook,
+        num_types::DisplayAmount,
+        order_book::{OrderBook, OrderBookArgs},
     },
     Exchange, Symbol,
 };
@@ -20,12 +20,12 @@ use self::data::ExchangeInfoBitstamp;
 
 pub mod data;
 
-pub struct BitstampOrderbook {
-    pub orderbook: Arc<Mutex<Orderbook>>,
+pub struct BitstampOrderBook {
+    pub orderbook: Arc<Mutex<OrderBook>>,
 }
 
 #[async_trait]
-impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook {
+impl ExchangeBook<Snapshot, BookUpdate> for BitstampOrderBook {
     // make sure these have trailing slashes
     const BASE_URL_HTTPS: &'static str = "https://www.bitstamp.net/api/v2/";
     const BASE_URL_WSS: &'static str = "wss://ws.bitstamp.net/";
@@ -42,20 +42,20 @@ impl ExchangeOrderbook<Snapshot, BookUpdate> for BitstampOrderbook {
         Ok(exchange_orderbook)
     }
 
-    fn orderbook(&self) -> Arc<Mutex<Orderbook>> {
+    fn orderbook(&self) -> Arc<Mutex<OrderBook>> {
         self.orderbook.clone()
     }
 
-    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderbookArgs> {
+    async fn fetch_orderbook_args(symbol: &Symbol, price_range: u8) -> Result<OrderBookArgs> {
         let (best_price, _) = Self::fetch_prices(symbol).await?;
 
         println!("base_url_https: {}", Self::base_url_https());
         let (scale_price, scale_quantity) =
             ExchangeInfoBitstamp::fetch_scales(Self::base_url_https(), symbol).await?;
         let (storage_price_min, storage_price_max) =
-            OrderbookArgs::get_min_max(best_price, price_range, scale_price)?;
+            OrderBookArgs::get_min_max(best_price, price_range, scale_price)?;
 
-        let args = OrderbookArgs {
+        let args = OrderBookArgs {
             storage_price_min,
             storage_price_max,
             scale_price,
@@ -121,8 +121,8 @@ mod tests {
 
     use crate::{
         core::{
-            numtypes::{ToDisplay, ToStorage},
-            orderbook::{Orderbook, OrderbookArgs},
+            num_types::{ToDisplay, ToStorage},
+            order_book::{OrderBook, OrderBookArgs},
         },
         exchanges::bitstamp::data::Snapshot,
         Exchange, Symbol,
@@ -133,7 +133,7 @@ mod tests {
         storage_price_max: u64,
         scale_price: u32,
         scale_quantity: u32,
-    ) -> Orderbook {
+    ) -> OrderBook {
         let subscriber = tracing_subscriber::fmt()
             .with_line_number(true)
             .with_max_level(tracing::Level::INFO)
@@ -144,7 +144,7 @@ mod tests {
         let exchange = Exchange::BITSTAMP;
         let symbol = Symbol::BTCUSDT;
 
-        let orderbook = Orderbook::new(
+        let orderbook = OrderBook::new(
             exchange,
             symbol,
             storage_price_min,
@@ -203,7 +203,7 @@ mod tests {
 
         let price_range = 5;
         let (storage_price_min, storage_price_max) =
-            OrderbookArgs::get_min_max(best_bid[0], price_range, 0).unwrap();
+            OrderBookArgs::get_min_max(best_bid[0], price_range, 0).unwrap();
 
         assert_eq!(storage_price_min, 29301);
         assert_eq!(storage_price_max, 32304);
